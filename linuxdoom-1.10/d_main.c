@@ -31,9 +31,10 @@ static const char rcsid[] = "$Id: d_main.c,v 1.8 1997/02/03 22:45:09 b1 Exp $";
 #define	FGCOLOR		8
 
 
-#ifdef NORMALUNIX
+#if defined(NORMALUNIX) || defined(N64)
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <unistd.h>
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -150,7 +151,7 @@ int 		eventtail;
 void D_PostEvent (event_t* ev)
 {
     events[eventhead] = *ev;
-    eventhead = (++eventhead)&(MAXEVENTS-1);
+	eventhead = (eventhead + 1) & (MAXEVENTS-1);
 }
 
 
@@ -167,7 +168,7 @@ void D_ProcessEvents (void)
 	 && (W_CheckNumForName("map01")<0) )
       return;
 	
-    for ( ; eventtail != eventhead ; eventtail = (++eventtail)&(MAXEVENTS-1) )
+    for ( ; eventtail != eventhead ; eventtail = (eventtail + 1) & (MAXEVENTS-1) )
     {
 	ev = &events[eventtail];
 	if (M_Responder (ev))
@@ -503,8 +504,12 @@ void D_AdvanceDemo (void)
 
 	    if ( gamemode == retail )
 	      pagename = "CREDIT";
-	    else
+	    else if (W_CheckNumForName("HELP2") != -1)
 	      pagename = "HELP2";
+	    else if (W_CheckNumForName("HELP1") != -1)
+	      pagename = "HELP1";
+	    else
+	      pagename = "CREDIT";
 	}
 	break;
       case 5:
@@ -562,6 +567,13 @@ void D_AddFile (char *file)
 //
 void IdentifyVersion (void)
 {
+
+#ifdef N64
+	gamemode = registered;
+	D_AddFile ("rom:/doom.wad");
+	strcpy (basedefault, "doom.cfg");
+	return;
+#else
 
     char*	doom1wad;
     char*	doomwad;
@@ -714,6 +726,7 @@ void IdentifyVersion (void)
     // We don't abort. Let's see what the PWAD contains.
     //exit(1);
     //I_Error ("Game mode indeterminate\n");
+#endif
 }
 
 //

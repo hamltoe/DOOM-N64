@@ -782,6 +782,7 @@ void R_DrawPlayerSprites (void)
 // R_SortVisSprites
 //
 vissprite_t	vsprsortedhead;
+static vissprite_t	vsprunsortedhead;
 
 
 void R_SortVisSprites (void)
@@ -789,13 +790,14 @@ void R_SortVisSprites (void)
     int			i;
     int			count;
     vissprite_t*	ds;
-    vissprite_t*	best;
-    vissprite_t		unsorted;
+    vissprite_t*	best = NULL;
+    vissprite_t*	unsorted;
     fixed_t		bestscale;
 
     count = vissprite_p - vissprites;
 	
-    unsorted.next = unsorted.prev = &unsorted;
+    unsorted = &vsprunsortedhead;
+    unsorted->next = unsorted->prev = unsorted;
 
     if (!count)
 	return;
@@ -806,18 +808,18 @@ void R_SortVisSprites (void)
 	ds->prev = ds-1;
     }
     
-    vissprites[0].prev = &unsorted;
-    unsorted.next = &vissprites[0];
-    (vissprite_p-1)->next = &unsorted;
-    unsorted.prev = vissprite_p-1;
+    vissprites[0].prev = unsorted;
+    unsorted->next = &vissprites[0];
+    (vissprite_p-1)->next = unsorted;
+    unsorted->prev = vissprite_p-1;
     
     // pull the vissprites out by scale
-    //best = 0;		// shut up the compiler warning
     vsprsortedhead.next = vsprsortedhead.prev = &vsprsortedhead;
     for (i=0 ; i<count ; i++)
     {
+    best = NULL;
 	bestscale = MAXINT;
-	for (ds=unsorted.next ; ds!= &unsorted ; ds=ds->next)
+    for (ds=unsorted->next ; ds!= unsorted ; ds=ds->next)
 	{
 	    if (ds->scale < bestscale)
 	    {
@@ -825,6 +827,10 @@ void R_SortVisSprites (void)
 		best = ds;
 	    }
 	}
+    if (!best)
+    {
+        break;
+    }
 	best->next->prev = best->prev;
 	best->prev->next = best->next;
 	best->next = &vsprsortedhead;

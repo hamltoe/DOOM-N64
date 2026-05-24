@@ -627,10 +627,7 @@ P_SetupLevel
     // find map name
     if ( gamemode == commercial)
     {
-	if (map<10)
-	    sprintf (lumpname,"map0%i", map);
-	else
-	    sprintf (lumpname,"map%i", map);
+	snprintf (lumpname, sizeof(lumpname), "map%02d", map);
     }
     else
     {

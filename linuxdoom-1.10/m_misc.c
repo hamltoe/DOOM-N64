@@ -109,6 +109,18 @@ M_DrawText
 #define O_BINARY 0
 #endif
 
+static int M_FileExists(const char* name)
+{
+    int handle;
+
+    handle = open(name, O_RDONLY | O_BINARY, 0666);
+    if (handle == -1)
+        return 0;
+
+    close(handle);
+    return 1;
+}
+
 boolean
 M_WriteFile
 ( char const*	name,
@@ -239,7 +251,7 @@ default_t	defaults[] =
     {"show_messages",&showMessages, 1},
     
 
-#ifdef NORMALUNIX
+#if defined(NORMALUNIX) || defined(N64)
     {"key_right",&key_right, KEY_RIGHTARROW},
     {"key_left",&key_left, KEY_LEFTARROW},
     {"key_up",&key_up, KEY_UPARROW},
@@ -517,7 +529,7 @@ void M_ScreenShot (void)
     {
 	lbmname[4] = i/10 + '0';
 	lbmname[5] = i%10 + '0';
-	if (access(lbmname,0) == -1)
+    if (!M_FileExists(lbmname))
 	    break;	// file doesn't exist
     }
     if (i==100)

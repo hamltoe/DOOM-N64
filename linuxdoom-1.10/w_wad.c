@@ -35,6 +35,8 @@ rcsid[] = "$Id: w_wad.c,v 1.5 1997/02/03 16:47:57 b1 Exp $";
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <alloca.h>
+
+#ifndef O_BINARY
 #define O_BINARY		0
 #endif
 
@@ -47,6 +49,34 @@ rcsid[] = "$Id: w_wad.c,v 1.5 1997/02/03 16:47:57 b1 Exp $";
 #pragma implementation "w_wad.h"
 #endif
 #include "w_wad.h"
+
+#endif
+
+#ifndef NORMALUNIX
+#include <ctype.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <sys/types.h>
+#include <string.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <alloca.h>
+
+#ifndef O_BINARY
+#define O_BINARY        0
+#endif
+
+#include "doomtype.h"
+#include "m_swap.h"
+#include "i_system.h"
+#include "z_zone.h"
+
+#ifdef __GNUG__
+#pragma implementation "w_wad.h"
+#endif
+#include "w_wad.h"
+#endif
 
 
 
@@ -64,11 +94,26 @@ int			numlumps;
 void**			lumpcache;
 
 
-#define strcmpi	strcasecmp
-
-void strupr (char* s)
+static int wad_strcasecmp(const char* lhs, const char* rhs)
 {
-    while (*s) { *s = toupper(*s); s++; }
+    while (*lhs && *rhs)
+    {
+        int lc = toupper((unsigned char)*lhs);
+        int rc = toupper((unsigned char)*rhs);
+        if (lc != rc)
+            return lc - rc;
+        lhs++;
+        rhs++;
+    }
+
+    return toupper((unsigned char)*lhs) - toupper((unsigned char)*rhs);
+}
+
+#define strcmpi wad_strcasecmp
+
+static void wad_strupr (char* s)
+{
+    while (*s) { *s = toupper((unsigned char)*s); s++; }
 }
 
 int filelength (int handle) 
@@ -196,7 +241,9 @@ void W_AddFile (char *filename)
 	header.numlumps = LONG(header.numlumps);
 	header.infotableofs = LONG(header.infotableofs);
 	length = header.numlumps*sizeof(filelump_t);
-	fileinfo = alloca (length);
+	fileinfo = malloc (length);
+	if (!fileinfo)
+	    I_Error ("W_AddFile: couldn't allocate fileinfo for %s", filename);
 	lseek (handle, header.infotableofs, SEEK_SET);
 	read (handle, fileinfo, length);
 	numlumps += header.numlumps;
@@ -210,17 +257,23 @@ void W_AddFile (char *filename)
 	I_Error ("Couldn't realloc lumpinfo");
 
     lump_p = &lumpinfo[startlump];
-	
-    storehandle = reloadname ? -1 : handle;
-	
-    for (i=startlump ; i<numlumps ; i++,lump_p++, fileinfo++)
+
     {
-	lump_p->handle = storehandle;
-	lump_p->position = LONG(fileinfo->filepos);
-	lump_p->size = LONG(fileinfo->size);
-	strncpy (lump_p->name, fileinfo->name, 8);
+	filelump_t* fileinfo_base = fileinfo;
+	storehandle = reloadname ? -1 : handle;
+
+	for (i=startlump ; i<numlumps ; i++,lump_p++, fileinfo++)
+	{
+	    lump_p->handle = storehandle;
+	    lump_p->position = LONG(fileinfo->filepos);
+	    lump_p->size = LONG(fileinfo->size);
+	    strncpy (lump_p->name, fileinfo->name, 8);
+	}
+
+	if (fileinfo_base != &singleinfo)
+	    free (fileinfo_base);
     }
-	
+
     if (reloadname)
 	close (handle);
 }
@@ -253,23 +306,29 @@ void W_Reload (void)
     lumpcount = LONG(header.numlumps);
     header.infotableofs = LONG(header.infotableofs);
     length = lumpcount*sizeof(filelump_t);
-    fileinfo = alloca (length);
+    fileinfo = malloc (length);
+    if (!fileinfo)
+	I_Error ("W_Reload: couldn't allocate fileinfo");
     lseek (handle, header.infotableofs, SEEK_SET);
     read (handle, fileinfo, length);
     
     // Fill in lumpinfo
     lump_p = &lumpinfo[reloadlump];
-	
-    for (i=reloadlump ;
-	 i<reloadlump+lumpcount ;
-	 i++,lump_p++, fileinfo++)
-    {
-	if (lumpcache[i])
-	    Z_Free (lumpcache[i]);
 
-	lump_p->position = LONG(fileinfo->filepos);
-	lump_p->size = LONG(fileinfo->size);
+    {
+	filelump_t* fi = fileinfo;
+	for (i=reloadlump ;
+	     i<(unsigned)(reloadlump+lumpcount) ;
+	     i++,lump_p++, fi++)
+	{
+	    if (lumpcache[i])
+		Z_Free (lumpcache[i]);
+
+	    lump_p->position = LONG(fi->filepos);
+	    lump_p->size = LONG(fi->size);
+	}
     }
+    free (fileinfo);
 	
     close (handle);
 }
@@ -304,7 +363,9 @@ void W_InitMultipleFiles (char** filenames)
 
     if (!numlumps)
 	I_Error ("W_InitFiles: no files found");
-    
+
+    printf ("W_Init: %d lumps loaded\n", numlumps);
+
     // set up caching
     size = numlumps * sizeof(*lumpcache);
     lumpcache = malloc (size);
@@ -367,7 +428,7 @@ int W_CheckNumForName (char* name)
     name8.s[8] = 0;
 
     // case insensitive
-    strupr (name8.s);		
+    wad_strupr (name8.s);		
 
     v1 = name8.x[0];
     v2 = name8.x[1];

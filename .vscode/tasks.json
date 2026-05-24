@@ -1,0 +1,16 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "build-doom",
+			"type": "shell",
+			"command": "wsl",
+			"args": [
+				"bash",
+				"-lc",
+				"cd /mnt/c/Users/ton_o/DOOM-N64 && N64_GCCPREFIX=/opt/libdragon N64_INST=/mnt/c/Users/ton_o/DOOM-N64/libdragon make -j4"
+			],
+			"isBackground": false
+		}
+	]
+}

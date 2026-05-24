@@ -31,9 +31,9 @@
 
 // Endianess handling.
 // WAD files are stored little endian.
-#ifdef __BIG_ENDIAN__
-short	SwapSHORT(short);
-long	SwapLONG(long);
+#if defined(__BIG_ENDIAN__) || defined(__MIPSEB__) || defined(N64)
+unsigned short SwapSHORT(unsigned short);
+unsigned long SwapLONG(unsigned long);
 #define SHORT(x)	((short)SwapSHORT((unsigned short) (x)))
 #define LONG(x)         ((long)SwapLONG((unsigned long) (x)))
 #else

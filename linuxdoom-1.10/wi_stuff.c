@@ -1576,7 +1576,7 @@ void WI_loadData(void)
 				       PU_STATIC, 0);
 	for (i=0 ; i<NUMCMAPS ; i++)
 	{								
-	    sprintf(name, "CWILV%2.2d", i);
+	    snprintf(name, sizeof(name), "CWILV%02u", (unsigned)(i % 100));
 	    lnames[i] = W_CacheLumpName(name, PU_STATIC);
 	}					
     }
@@ -1610,7 +1610,10 @@ void WI_loadData(void)
 		    if (wbs->epsd != 1 || j != 8) 
 		    {
 			// animations
-			sprintf(name, "WIA%d%.2d%.2d", wbs->epsd, j, i);  
+			snprintf(name, sizeof(name), "WIA%u%02u%02u",
+				 (unsigned)(wbs->epsd % 10),
+				 (unsigned)(j % 100),
+				 (unsigned)(i % 100));
 			a->p[i] = W_CacheLumpName(name, PU_STATIC);
 		    }
 		    else

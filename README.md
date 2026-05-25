@@ -12,6 +12,8 @@ This repository contains:
 
 Current build produces:
 - doom.z64
+- build/doom.elf
+- build/doom.dfs
 
 IWAD handling:
 - Place your legally owned DOOM.WAD in WADs/DOOM.WAD
@@ -47,7 +49,7 @@ git submodule update --init --recursive
 
 ### 3) Put IWAD in place
 
-Copy your DOOM.WAD or customn .WAD file to the WADs folder:
+Copy your legally owned DOOM.WAD (or another compatible WAD file) to the WADs folder:
 
 ```text
 WADs/DOOM.WAD
@@ -128,3 +130,23 @@ Fix:
 
 - Source code remains under original project licenses (see LICENSE.TXT and component licenses)
 - DOOM.WAD is not redistributed by this repository
+
+## N64 Controller Mappings
+
+Current default bindings from the N64 platform input layer:
+
+- Start: Open/close menu
+- Analog Stick: Move forward/back and turn left/right
+- C-Left: Strafe left
+- C-Right: Strafe right
+- C-Up: Run (speed modifier)
+- C-Down: Use/Open
+- L: Toggle automap
+- R: Fire
+- D-Pad Up: Pause
+- D-Pad Down: Cycle thru selectable weapons
+- D-Pad Left: Select previous weapon
+- D-Pad Right: Select next weapon
+- A : Fire & Confirm/Enter (Menu)
+- B : Use/Open & Back (Menu)
+- Z : Fire

@@ -47,7 +47,7 @@ git submodule update --init --recursive
 
 ### 3) Put IWAD in place
 
-Copy your DOOM.WAD file to:
+Copy your DOOM.WAD or customn .WAD file to the WADs folder:
 
 ```text
 WADs/DOOM.WAD

@@ -14,6 +14,7 @@
 #include "d_net.h"
 #include "g_game.h"
 #include "i_system.h"
+#include "n64_debug.h"
 
 int mb_used = 5;
 
@@ -118,7 +119,7 @@ void I_Error(char *error, ...)
     vsnprintf(msg, sizeof(msg), error, argptr);
     va_end(argptr);
 
-    debugf("Error: %s\n", msg);
+    N64_DEBUGF("Error: %s\n", msg);
 
     if (demorecording)
         G_CheckDemoStatus();

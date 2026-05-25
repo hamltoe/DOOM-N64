@@ -23,6 +23,8 @@ SOURCE_DIR = .
 DOOM_SRC = linuxdoom-1.10
 N64_MKDFS_ROOT = filesystem
 
+DEBUG ?= 0
+
 ifneq ($(wildcard $(N64_INST)/n64.mk),)
 include $(N64_INST)/n64.mk
 else
@@ -32,6 +34,7 @@ endif
 N64_ROM_TITLE = "DOOM N64 WIP"
 
 CFLAGS += -I$(DOOM_SRC)
+CFLAGS += -DDEBUG=$(DEBUG)
 ifeq ($(strip $(wildcard $(REQUESTED_N64_INST)/mips64-elf/include/ktls.h) $(wildcard $(REQUESTED_N64_INST)/include/ktls.h)),)
 ifneq ($(wildcard $(CURDIR)/libdragon/include/ktls.h),)
 CFLAGS += -I$(CURDIR)/libdragon/include

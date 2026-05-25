@@ -252,12 +252,12 @@ default_t	defaults[] =
     
 
 #if defined(NORMALUNIX) || defined(N64)
-    {"key_right",&key_right, '.'},
-    {"key_left",&key_left, ','},
+    {"key_right",&key_right, KEY_RIGHTARROW},
+    {"key_left",&key_left, KEY_LEFTARROW},
     {"key_up",&key_up, KEY_UPARROW},
     {"key_down",&key_down, KEY_DOWNARROW},
-    {"key_strafeleft",&key_strafeleft, KEY_LEFTARROW},
-    {"key_straferight",&key_straferight, KEY_RIGHTARROW},
+    {"key_strafeleft",&key_strafeleft, ','},
+    {"key_straferight",&key_straferight, '.'},
 
     {"key_fire",&key_fire, KEY_RCTRL},
     {"key_use",&key_use, ' '},
@@ -288,7 +288,7 @@ default_t	defaults[] =
     {"joyb_use",&joybuse,3},
     {"joyb_speed",&joybspeed,2},
 
-    {"screenblocks",&screenblocks, 9},
+    {"screenblocks",&screenblocks, 10},
     {"detaillevel",&detailLevel, 0},
 
     {"snd_channels",&numChannels, 3},

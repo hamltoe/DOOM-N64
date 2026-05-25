@@ -169,6 +169,7 @@ int             joybspeed;
  
  
 #define MAXPLMOVE		(forwardmove[1]) 
+#define JOY_ANALOG_MAX	80
  
 #define TURBOTHRESHOLD	0x32
 
@@ -226,6 +227,25 @@ int G_CmdChecksum (ticcmd_t* cmd)
 		 
     return sum; 
 } 
+
+static int G_ScaleJoyAnalog(int value, int full_scale)
+{
+    int magnitude;
+    int scaled;
+
+    if (!value)
+        return 0;
+
+    magnitude = (value < 0) ? -value : value;
+    if (magnitude > JOY_ANALOG_MAX)
+        magnitude = JOY_ANALOG_MAX;
+
+    scaled = (full_scale * magnitude + (JOY_ANALOG_MAX / 2)) / JOY_ANALOG_MAX;
+    if (!scaled)
+        scaled = 1;
+
+    return scaled;
+}
  
 
 //
@@ -288,9 +308,9 @@ void G_BuildTiccmd (ticcmd_t* cmd)
 	    side -= sidemove[speed]; 
 	}
 	if (joyxmove > 0) 
-	    side += sidemove[speed]; 
+        side += G_ScaleJoyAnalog(joyxmove, sidemove[speed]); 
 	if (joyxmove < 0) 
-	    side -= sidemove[speed]; 
+        side -= G_ScaleJoyAnalog(joyxmove, sidemove[speed]); 
  
     } 
     else 
@@ -300,9 +320,9 @@ void G_BuildTiccmd (ticcmd_t* cmd)
 	if (gamekeydown[key_left]) 
 	    cmd->angleturn += angleturn[tspeed]; 
 	if (joyxmove > 0) 
-	    cmd->angleturn -= angleturn[tspeed]; 
+        cmd->angleturn -= G_ScaleJoyAnalog(joyxmove, angleturn[tspeed]); 
 	if (joyxmove < 0) 
-	    cmd->angleturn += angleturn[tspeed]; 
+        cmd->angleturn += G_ScaleJoyAnalog(joyxmove, angleturn[tspeed]); 
     } 
  
     if (gamekeydown[key_up]) 
@@ -316,9 +336,9 @@ void G_BuildTiccmd (ticcmd_t* cmd)
 	forward -= forwardmove[speed]; 
     }
     if (joyymove < 0) 
-	forward += forwardmove[speed]; 
+    forward += G_ScaleJoyAnalog(joyymove, forwardmove[speed]); 
     if (joyymove > 0) 
-	forward -= forwardmove[speed]; 
+    forward -= G_ScaleJoyAnalog(joyymove, forwardmove[speed]); 
     if (gamekeydown[key_straferight]) 
 	side += sidemove[speed]; 
     if (gamekeydown[key_strafeleft]) 

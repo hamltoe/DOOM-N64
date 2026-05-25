@@ -14,6 +14,7 @@
 #include "doomstat.h"
 #include "i_sound.h"
 #include "i_system.h"
+#include "n64_debug.h"
 #include "sounds.h"
 #include "w_wad.h"
 #include "z_zone.h"
@@ -585,6 +586,7 @@ typedef struct
     uint8_t        playing;
     uint8_t        looping;
     uint8_t        eos;
+#if DOOM_N64_DEBUG
     uint8_t        dbg_event_budget;
     uint32_t       dbg_batches;
     uint32_t       dbg_events;
@@ -596,7 +598,7 @@ typedef struct
     int32_t        dbg_peak_abs;
     uint8_t        dbg_reported_nonzero;
     uint8_t        dbg_reported_silence;
-    uint8_t        _pad[2];
+#endif
 } n64_mus_player_t;
 
 static n64_mus_player_t mus_player;
@@ -627,7 +629,9 @@ static void N64_MusProcessBatch(void)
     uint16_t delay;
     float freq;
 
+    #if DOOM_N64_DEBUG
     mus_player.dbg_batches++;
+    #endif
 
     for (;;)
     {
@@ -638,11 +642,12 @@ static void N64_MusProcessBatch(void)
         ch   = ev & 0x0F;
         type = (ev >> 4) & 0x07;
         slot = ch;
+        #if DOOM_N64_DEBUG
         mus_player.dbg_events++;
 
         if (mus_player.dbg_event_budget > 0)
         {
-            debugf("MUS event[%u]: type=%d ch=%d last=%d pos=%d\n",
+            N64_DEBUGF("MUS event[%u]: type=%d ch=%d last=%d pos=%d\n",
                    (unsigned)mus_player.dbg_events,
                    type,
                    ch,
@@ -650,6 +655,7 @@ static void N64_MusProcessBatch(void)
                    mus_player.score_pos - 1);
             mus_player.dbg_event_budget--;
         }
+        #endif
 
         switch (type)
         {
@@ -657,7 +663,9 @@ static void N64_MusProcessBatch(void)
             if (!N64_MusReadByte(&note))
                 return;
             mus_player.voices[slot].active = 0;
+            #if DOOM_N64_DEBUG
             mus_player.dbg_note_off++;
+            #endif
             break;
 
         case 1: /* play note: 1-2 bytes */
@@ -681,17 +689,19 @@ static void N64_MusProcessBatch(void)
             mus_player.voices[slot].is_perc  = (uint8_t)(ch == MUS_PERC_CHANNEL);
             if (ch == MUS_PERC_CHANNEL)
                 mus_player.voices[slot].perc_left = MUS_PERC_DECAY;
+            #if DOOM_N64_DEBUG
             mus_player.dbg_note_on++;
 
             if (mus_player.dbg_event_budget > 0)
             {
-                debugf("MUS note on: ch=%d note=%d vel=%d chvol=%d\n",
+                N64_DEBUGF("MUS note on: ch=%d note=%d vel=%d chvol=%d\n",
                        ch,
                        note,
                        mus_player.ch_vel[ch],
                        mus_player.ch_vol[ch]);
                 mus_player.dbg_event_budget--;
             }
+            #endif
             break;
 
         case 2: /* pitch wheel: 1 byte */
@@ -722,16 +732,18 @@ static void N64_MusProcessBatch(void)
                 if (mus_player.voices[slot].active)
                     mus_player.voices[slot].ch_vol = val;
 
+                #if DOOM_N64_DEBUG
                 if (mus_player.dbg_event_budget > 0)
                 {
-                    debugf("MUS volume: ch=%d val=%d\n", ch, val);
+                    N64_DEBUGF("MUS volume: ch=%d val=%d\n", ch, val);
                     mus_player.dbg_event_budget--;
                 }
+                #endif
             }
             break;
 
         case 6: /* score end */
-            debugf("MUS score end: events=%u notes_on=%u notes_off=%u pos=%d/%d\n",
+            N64_DEBUGF("MUS score end: events=%u notes_on=%u notes_off=%u pos=%d/%d\n",
                    (unsigned)mus_player.dbg_events,
                    (unsigned)mus_player.dbg_note_on,
                    (unsigned)mus_player.dbg_note_off,
@@ -742,7 +754,7 @@ static void N64_MusProcessBatch(void)
 
         default: /* case 5 (end of measure) and 7 (unused): no extra bytes */
             if (type == 7)
-                debugf("MUS warning: reserved event type 7 at pos=%d\n", mus_player.score_pos - 1);
+                N64_DEBUGF("MUS warning: reserved event type 7 at pos=%d\n", mus_player.score_pos - 1);
             break;
         }
 
@@ -760,11 +772,13 @@ static void N64_MusProcessBatch(void)
 
         mus_player.tick_delay = (int32_t)delay;
 
+        #if DOOM_N64_DEBUG
         if (mus_player.dbg_event_budget > 0)
         {
-            debugf("MUS delay: %u ticks\n", (unsigned)delay);
+            N64_DEBUGF("MUS delay: %u ticks\n", (unsigned)delay);
             mus_player.dbg_event_budget--;
         }
+        #endif
 
         return;
     }
@@ -776,22 +790,26 @@ static void N64_MusWaveRead(void *ctx, samplebuffer_t *sbuf,
     int16_t *buf;
     int i, v;
     int32_t sum;
+#if DOOM_N64_DEBUG
     int32_t abs_sum;
+#endif
     uint32_t half;
     int16_t wsmp;
     int32_t vscale;
 
     (void)ctx;
 
+    #if DOOM_N64_DEBUG
     mus_player.dbg_read_calls++;
 
     if (mus_player.dbg_read_calls == 1)
     {
-        debugf("MUS read begin: wpos=%d wlen=%d seeking=%d\n",
+        N64_DEBUGF("MUS read begin: wpos=%d wlen=%d seeking=%d\n",
                wpos,
                wlen,
                seeking ? 1 : 0);
     }
+    #endif
 
     if (seeking)
     {
@@ -887,6 +905,7 @@ static void N64_MusWaveRead(void *ctx, samplebuffer_t *sbuf,
         else if (sum < -32768) sum = -32768;
         buf[i] = (int16_t)sum;
 
+        #if DOOM_N64_DEBUG
         abs_sum = (sum < 0) ? -sum : sum;
         if (abs_sum > mus_player.dbg_peak_abs)
             mus_player.dbg_peak_abs = abs_sum;
@@ -896,7 +915,7 @@ static void N64_MusWaveRead(void *ctx, samplebuffer_t *sbuf,
             mus_player.dbg_nonzero_samples++;
             if (!mus_player.dbg_reported_nonzero)
             {
-                debugf("MUS first nonzero sample at %u (amp=%d, notes_on=%u, events=%u)\n",
+                N64_DEBUGF("MUS first nonzero sample at %u (amp=%d, notes_on=%u, events=%u)\n",
                        (unsigned)mus_player.dbg_generated_samples,
                        (int)sum,
                        (unsigned)mus_player.dbg_note_on,
@@ -906,13 +925,15 @@ static void N64_MusWaveRead(void *ctx, samplebuffer_t *sbuf,
         }
 
         mus_player.dbg_generated_samples++;
+        #endif
     }
 
+    #if DOOM_N64_DEBUG
     if (!mus_player.dbg_reported_silence
         && mus_player.dbg_generated_samples >= MUS_DEBUG_SILENCE_SAMPLES
         && mus_player.dbg_nonzero_samples == 0)
     {
-        debugf("MUS silence warning: generated=%u events=%u notes_on=%u score_pos=%d/%d\n",
+        N64_DEBUGF("MUS silence warning: generated=%u events=%u notes_on=%u score_pos=%d/%d\n",
                (unsigned)mus_player.dbg_generated_samples,
                (unsigned)mus_player.dbg_events,
                (unsigned)mus_player.dbg_note_on,
@@ -920,6 +941,7 @@ static void N64_MusWaveRead(void *ctx, samplebuffer_t *sbuf,
                mus_player.score_len);
         mus_player.dbg_reported_silence = 1;
     }
+    #endif
 }
 
 static boolean N64_MusSetup(const void *data, int len)
@@ -940,7 +962,7 @@ static boolean N64_MusSetup(const void *data, int len)
     if (score_start < 16 || score_start > len
         || score_len <= 0 || score_start + score_len > len)
     {
-        debugf("I_RegisterSong: malformed MUS header (start=%d len=%d total=%d)\n",
+        N64_DEBUGF("I_RegisterSong: malformed MUS header (start=%d len=%d total=%d)\n",
                score_start, score_len, len);
         return false;
     }
@@ -950,16 +972,24 @@ static boolean N64_MusSetup(const void *data, int len)
     mus_player.score_len  = score_len;
     mus_player.score_pos  = 0;
     mus_player.noise_lfsr = 0xDEADBEEFu;
-        mus_player.dbg_event_budget = MUS_DEBUG_EVENT_LOG_BUDGET;
+    #if DOOM_N64_DEBUG
+    mus_player.dbg_event_budget = MUS_DEBUG_EVENT_LOG_BUDGET;
+    #endif
     memset(mus_player.ch_vol, 127, sizeof(mus_player.ch_vol));
     memset(mus_player.ch_vel, 100, sizeof(mus_player.ch_vel));
 
-        debugf("MUS setup: score_start=%d score_len=%d channels=%d secondary=%d instruments=%d\n",
-            score_start,
-            score_len,
-            prim_channels,
-            sec_channels,
-            inst_count);
+    N64_DEBUGF("MUS setup: score_start=%d score_len=%d channels=%d secondary=%d instruments=%d\n",
+               score_start,
+               score_len,
+               prim_channels,
+               sec_channels,
+               inst_count);
+
+    #if !DOOM_N64_DEBUG
+    (void)prim_channels;
+    (void)sec_channels;
+    (void)inst_count;
+    #endif
 
     mus_player.wave.name      = "MUS";
     mus_player.wave.bits      = 16;
@@ -970,7 +1000,7 @@ static boolean N64_MusSetup(const void *data, int len)
     mus_player.wave.read      = N64_MusWaveRead;
     mus_player.wave.ctx       = &mus_player;
 
-    debugf("MUS setup: waveform ready (rate=%dHz)\n", N64_AUDIO_FREQUENCY);
+    N64_DEBUGF("MUS setup: waveform ready (rate=%dHz)\n", N64_AUDIO_FREQUENCY);
 
     return true;
 }
@@ -1020,7 +1050,7 @@ static boolean N64_OpenMusicTrack(void)
 
     if (music_channel_count <= 0)
     {
-        debugf("I_PlaySong: no mixer channels available for music\n");
+        N64_DEBUGF("I_PlaySong: no mixer channels available for music\n");
         return false;
     }
 
@@ -1033,7 +1063,7 @@ static boolean N64_OpenMusicTrack(void)
 
         if (music_track.channels > music_channel_count)
         {
-            debugf("I_PlaySong: %s needs %d channels, only %d reserved\n",
+            N64_DEBUGF("I_PlaySong: %s needs %d channels, only %d reserved\n",
                    music_track.asset_path,
                    music_track.channels,
                    music_channel_count);
@@ -1050,7 +1080,7 @@ static boolean N64_OpenMusicTrack(void)
 
         if (music_track.channels > music_channel_count)
         {
-            debugf("I_PlaySong: %s needs %d channels, only %d reserved\n",
+            N64_DEBUGF("I_PlaySong: %s needs %d channels, only %d reserved\n",
                    music_track.asset_path,
                    music_track.channels,
                    music_channel_count);
@@ -1093,7 +1123,7 @@ static void N64_StartMusicTrack(boolean looping)
         mus_player.looping = looping ? 1 : 0;
         mus_player.playing = 1;
         mus_player.eos     = 0;
-        debugf("I_PlaySong: MUS start lump=%s loop=%d channel=%d\n",
+        N64_DEBUGF("I_PlaySong: MUS start lump=%s loop=%d channel=%d\n",
                music_track.lump_name,
                looping ? 1 : 0,
                music_first_channel);
@@ -1119,7 +1149,7 @@ static void N64_StopMusicTrack(void)
     {
         mixer_ch_stop(music_first_channel);
         mus_player.playing = 0;
-        debugf("I_StopSong: MUS stop samples=%u nonzero=%u peak=%d events=%u notes_on=%u\n",
+        N64_DEBUGF("I_StopSong: MUS stop samples=%u nonzero=%u peak=%d events=%u notes_on=%u\n",
                (unsigned)mus_player.dbg_generated_samples,
                (unsigned)mus_player.dbg_nonzero_samples,
                (int)mus_player.dbg_peak_abs,
@@ -1139,7 +1169,7 @@ static void N64_MaybeLoopMusic(void)
     if (music_track.format == N64_MUSIC_FMT_MUS
         && !mus_player.playing)
     {
-        debugf("MUS playback finished: eos=%d pos=%d/%d events=%u notes_on=%u nonzero=%u\n",
+        N64_DEBUGF("MUS playback finished: eos=%d pos=%d/%d events=%u notes_on=%u nonzero=%u\n",
                mus_player.eos ? 1 : 0,
                mus_player.score_pos,
                mus_player.score_len,
@@ -1230,7 +1260,7 @@ void I_InitSound(void)
     sound_initialized = true;
     N64_PumpAudio();
 
-    debugf("I_InitSound: %d SFX channels, %d music channels, %d Hz output\n",
+    N64_DEBUGF("I_InitSound: %d SFX channels, %d music channels, %d Hz output\n",
            voice_count,
            music_channel_count,
            audio_get_frequency());
@@ -1464,18 +1494,18 @@ int I_RegisterSong(void* data)
     music_track.handle = next_music_handle;
     music_track.registered = true;
     music_track.lumpnum = N64_FindLumpNumByData(data);
-        llen = (music_track.lumpnum >= 0)
-            ? W_LumpLength(music_track.lumpnum) : 0;
+    llen = (music_track.lumpnum >= 0)
+         ? W_LumpLength(music_track.lumpnum) : 0;
 
-        debugf("I_RegisterSong: handle=%d lumpnum=%d len=%d data=%p\n",
-            music_track.handle,
-            music_track.lumpnum,
-            llen,
-            data);
+    N64_DEBUGF("I_RegisterSong: handle=%d lumpnum=%d len=%d data=%p\n",
+               music_track.handle,
+               music_track.lumpnum,
+               llen,
+               data);
 
     if (N64_ResolveMusicTrackAsset(music_track.lumpnum))
     {
-        debugf("I_RegisterSong: %s -> %s\n",
+        N64_DEBUGF("I_RegisterSong: %s -> %s\n",
                music_track.lump_name,
                music_track.asset_path);
     }
@@ -1487,12 +1517,12 @@ int I_RegisterSong(void* data)
             music_track.mus_data     = data;
             music_track.mus_data_len = llen;
             music_track.format       = N64_MUSIC_FMT_MUS;
-            debugf("I_RegisterSong: MUS soft-synth -> %s\n",
+            N64_DEBUGF("I_RegisterSong: MUS soft-synth -> %s\n",
                    music_track.lump_name[0] ? music_track.lump_name : "?");
         }
         else if (!missing_music_warning_printed)
         {
-            debugf("I_RegisterSong: no .xm64/.ym64 and not MUS format\n");
+            N64_DEBUGF("I_RegisterSong: no .xm64/.ym64 and not MUS format\n");
             missing_music_warning_printed = true;
         }
     }
@@ -1505,7 +1535,7 @@ I_PlaySong
 ( int handle,
   int looping )
 {
-    debugf("I_PlaySong: request handle=%d active=%d format=%d looping=%d opened=%d\n",
+    N64_DEBUGF("I_PlaySong: request handle=%d active=%d format=%d looping=%d opened=%d\n",
            handle,
            music_track.handle,
            music_track.format,
@@ -1528,7 +1558,7 @@ I_PlaySong
 
     if (!music_track.playing)
     {
-        debugf("I_PlaySong: failed to start music asset %s\n",
+        N64_DEBUGF("I_PlaySong: failed to start music asset %s\n",
                music_track.asset_path);
     }
 }

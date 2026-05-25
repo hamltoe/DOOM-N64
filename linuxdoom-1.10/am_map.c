@@ -989,7 +989,9 @@ AM_drawFline
     register int ay;
     register int d;
     
-    static fuck = 0;
+	#if DEBUG
+	static int out_of_bounds_count = 0;
+	#endif
 
     // For debugging only
     if (      fl->a.x < 0 || fl->a.x >= f_w
@@ -997,7 +999,9 @@ AM_drawFline
 	   || fl->b.x < 0 || fl->b.x >= f_w
 	   || fl->b.y < 0 || fl->b.y >= f_h)
     {
-	fprintf(stderr, "fuck %d \r", fuck++);
+	#if DEBUG
+	fprintf(stderr, "AM_drawFline out of bounds: %d\r", out_of_bounds_count++);
+	#endif
 	return;
     }
 

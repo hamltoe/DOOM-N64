@@ -252,12 +252,12 @@ default_t	defaults[] =
     
 
 #if defined(NORMALUNIX) || defined(N64)
-    {"key_right",&key_right, KEY_RIGHTARROW},
-    {"key_left",&key_left, KEY_LEFTARROW},
+    {"key_right",&key_right, '.'},
+    {"key_left",&key_left, ','},
     {"key_up",&key_up, KEY_UPARROW},
     {"key_down",&key_down, KEY_DOWNARROW},
-    {"key_strafeleft",&key_strafeleft, ','},
-    {"key_straferight",&key_straferight, '.'},
+    {"key_strafeleft",&key_strafeleft, KEY_LEFTARROW},
+    {"key_straferight",&key_straferight, KEY_RIGHTARROW},
 
     {"key_fire",&key_fire, KEY_RCTRL},
     {"key_use",&key_use, ' '},

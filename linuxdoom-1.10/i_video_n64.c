@@ -26,8 +26,8 @@ enum
     KEYIDX_ENTER,
     KEYIDX_FIRE,
     KEYIDX_USE,
-    KEYIDX_STRAFE_LEFT,
-    KEYIDX_STRAFE_RIGHT,
+    KEYIDX_TURN_LEFT,
+    KEYIDX_TURN_RIGHT,
     KEYIDX_SPEED,
     KEYIDX_COUNT
 };
@@ -97,11 +97,11 @@ void I_StartTic(void)
 
     I_UpdateKeyState(buttons.start, KEYIDX_MENU, KEY_ESCAPE);
     I_UpdateKeyState(buttons.a, KEYIDX_ENTER, KEY_ENTER);
-    I_UpdateKeyState(buttons.b, KEYIDX_FIRE, KEY_RCTRL);
-    I_UpdateKeyState(buttons.z, KEYIDX_USE, ' ');
+    I_UpdateKeyState((buttons.r || buttons.b), KEYIDX_FIRE, KEY_RCTRL);
+    I_UpdateKeyState((buttons.l || buttons.z || buttons.c_down), KEYIDX_USE, ' ');
 
-    I_UpdateKeyState((buttons.l || buttons.c_left), KEYIDX_STRAFE_LEFT, ',');
-    I_UpdateKeyState((buttons.r || buttons.c_right), KEYIDX_STRAFE_RIGHT, '.');
+    I_UpdateKeyState(buttons.c_left, KEYIDX_TURN_LEFT, ',');
+    I_UpdateKeyState(buttons.c_right, KEYIDX_TURN_RIGHT, '.');
     I_UpdateKeyState(buttons.c_up, KEYIDX_SPEED, KEY_RSHIFT);
 }
 

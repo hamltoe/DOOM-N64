@@ -444,6 +444,12 @@ Z_ChangeTag2
 }
 
 
+int Z_IsInitialized (void)
+{
+	return mainzone != NULL;
+}
+
+
 
 //
 // Z_FreeMemory

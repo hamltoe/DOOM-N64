@@ -13,14 +13,48 @@
 #include "i_sound.h"
 #include "d_net.h"
 #include "g_game.h"
+#include "i_main_n64.h"
 #include "i_system.h"
 #include "n64_debug.h"
+#include "z_zone.h"
 
 int mb_used = 4;
 
 static byte* zone_base;
 
 ticcmd_t emptycmd;
+
+void I_N64LogMemoryStats(const char* tag)
+{
+#if DOOM_N64_DEBUG
+    heap_stats_t heap;
+    int zone_free;
+    const char* label;
+
+    label = (tag && tag[0]) ? tag : "mem";
+
+    sys_get_heap_stats(&heap);
+
+    if (Z_IsInitialized())
+    {
+        zone_free = Z_FreeMemory();
+        N64_DEBUGF("MEM[%s]: heap=%d/%d KiB zone_free=%d KiB\n",
+                   label,
+                   heap.used / 1024,
+                   heap.total / 1024,
+                   zone_free / 1024);
+    }
+    else
+    {
+        N64_DEBUGF("MEM[%s]: heap=%d/%d KiB zone_free=n/a\n",
+                   label,
+                   heap.used / 1024,
+                   heap.total / 1024);
+    }
+#else
+    (void)tag;
+#endif
+}
 
 void
 I_Tactile
@@ -79,7 +113,7 @@ void I_Quit(void)
     I_ShutdownMusic();
     M_SaveDefaults();
     I_ShutdownGraphics();
-    exit(0);
+    I_N64ReturnToBrowser();
 }
 
 void I_WaitVBL(int count)

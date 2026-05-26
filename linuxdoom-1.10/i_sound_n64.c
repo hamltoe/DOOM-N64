@@ -280,22 +280,32 @@ static void N64_AliasSfx(int sfx_id, int root_sfx_id)
     N64_SetupWaveform(dst, S_sfx[sfx_id].name);
 }
 
-static void N64_LoadAllSfx(void)
+static boolean N64_EnsureSfxLoaded(int sfx_id)
 {
-    int i;
+    int root;
 
-    memset(sfx_cache, 0, sizeof(sfx_cache));
+    if (sfx_id <= 0 || sfx_id >= NUMSFX)
+        return false;
 
-    for (i = 1; i < NUMSFX; i++)
-    {
-        int root = N64_ResolveRootSfx(i);
+    if (sfx_cache[sfx_id].loaded)
+        return sfx_cache[sfx_id].pcm != NULL && sfx_cache[sfx_id].length > 0;
 
-        if (!sfx_cache[root].loaded)
-            N64_LoadRootSfx(root);
+    root = N64_ResolveRootSfx(sfx_id);
+    if (root <= 0 || root >= NUMSFX)
+        return false;
 
-        if (i != root)
-            N64_AliasSfx(i, root);
-    }
+    if (!sfx_cache[root].loaded)
+        N64_LoadRootSfx(root);
+
+    if (!sfx_cache[root].loaded || !sfx_cache[root].pcm || sfx_cache[root].length <= 0)
+        return false;
+
+    if (sfx_id != root)
+        N64_AliasSfx(sfx_id, root);
+
+    return sfx_cache[sfx_id].loaded
+        && sfx_cache[sfx_id].pcm != NULL
+        && sfx_cache[sfx_id].length > 0;
 }
 
 static void N64_ClearVoice(int voice)
@@ -1252,10 +1262,10 @@ void I_InitSound(void)
     for (i = music_first_channel; i < mixer_channel_count; i++)
         mixer_ch_set_limits(i, 16, 48000.0f, 0);
 
+    memset(sfx_cache, 0, sizeof(sfx_cache));
+
     if (!music_initialized)
         I_InitMusic();
-
-    N64_LoadAllSfx();
 
     sound_initialized = true;
     N64_PumpAudio();
@@ -1340,7 +1350,7 @@ I_StartSound
     if (id <= 0 || id >= NUMSFX)
         return 0;
 
-    if (!sfx_cache[id].loaded || !sfx_cache[id].pcm || sfx_cache[id].length <= 0)
+    if (!N64_EnsureSfxLoaded(id))
         return 0;
 
     voice = N64_AllocVoice();

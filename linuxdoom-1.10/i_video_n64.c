@@ -288,6 +288,8 @@ void I_ShutdownGraphics(void)
     if (!video_initialized)
         return;
 
+    I_N64LogMemoryStats("i_video:before_shutdown");
+
     for (i = 0; i < 3; i++)
     {
         if (n64_aux_screen_owned[i] && n64_aux_screens[i])
@@ -303,9 +305,9 @@ void I_ShutdownGraphics(void)
     surface_free(&doom_screen8);
     screens[0] = NULL;
     rdpq_close();
-    display_close();
 
     video_initialized = false;
+    I_N64LogMemoryStats("i_video:after_shutdown");
 }
 
 void I_StartFrame(void)
@@ -428,12 +430,13 @@ void I_InitGraphics(void)
     if (video_initialized)
         return;
 
+    I_N64LogMemoryStats("i_video:before_init");
+
     uint32_t existing_buffers = display_get_num_buffers();
     N64_DEBUGF("I_InitGraphics: display_get_num_buffers()=%u\n", (unsigned)existing_buffers);
     if (existing_buffers > 0)
     {
-        N64_DEBUGF("I_InitGraphics: reusing display via display_change\n");
-        display_change(RESOLUTION_320x240, DEPTH_16_BPP, 3, GAMMA_NONE, FILTERS_RESAMPLE);
+        N64_DEBUGF("I_InitGraphics: reusing existing display\n");
     }
     else
     {
@@ -497,4 +500,5 @@ void I_InitGraphics(void)
     next_weapon_cycle_key = '1';
 
     video_initialized = true;
+    I_N64LogMemoryStats("i_video:after_init");
 }

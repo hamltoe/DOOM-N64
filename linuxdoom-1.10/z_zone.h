@@ -51,6 +51,7 @@ void    Z_FreeTags (int lowtag, int hightag);
 void    Z_DumpHeap (int lowtag, int hightag);
 void    Z_FileDumpHeap (FILE *f);
 void    Z_CheckHeap (void);
+int     Z_IsInitialized (void);
 void    Z_ChangeTag2 (void *ptr, int tag);
 int     Z_FreeMemory (void);
 

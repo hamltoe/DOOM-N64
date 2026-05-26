@@ -1190,10 +1190,15 @@ void D_DoomMain (void)
 	int wad_index;
 	for (wad_index = 0; wadfiles[wad_index]; wad_index++)
 	    N64_DEBUGF("W_InitMultipleFiles input[%d]=%s\n", wad_index, wadfiles[wad_index]);
+	I_N64LogMemoryStats("d_main:before_W_InitMultipleFiles");
 	}
 #endif
 
     W_InitMultipleFiles (wadfiles);
+
+#ifdef N64
+    I_N64LogMemoryStats("d_main:after_W_InitMultipleFiles");
+#endif
     
 
     // Check for -file in shareware

@@ -15,6 +15,7 @@
 
 #include <libdragon.h>
 
+#include "i_system.h"
 #include "i_wad_browser_n64.h"
 #include "n64_debug.h"
 
@@ -29,6 +30,8 @@
 #define N64_WAD_ROW_HEIGHT 12
 
 #define N64_WAD_FONT_ID 1
+#define N64_WAD_TEXT_CACHE_SIZE 96
+#define N64_WAD_TEXT_CACHE_TEXT_MAX 96
 
 enum
 {
@@ -61,6 +64,18 @@ static int n64_wad_count;
 static int n64_wad_compatible_count;
 static char n64_selected_wad[N64_WAD_PATH_LEN] = "rom:/doom.wad";
 static rdpq_font_t* n64_wad_font;
+
+typedef struct n64_wad_text_cache_entry_s
+{
+    int style;
+    int width;
+    char text[N64_WAD_TEXT_CACHE_TEXT_MAX];
+    rdpq_paragraph_t* layout;
+    bool in_use;
+} n64_wad_text_cache_entry_t;
+
+static n64_wad_text_cache_entry_t n64_text_cache[N64_WAD_TEXT_CACHE_SIZE];
+static int n64_text_cache_evict;
 
 static color_t col_bg_dark;
 static color_t col_bg_header;
@@ -445,36 +460,126 @@ static void I_DrawTextSafe(int x,
                            int style,
                            const char* text)
 {
-    rdpq_textparms_t parms;
     rdpq_paragraph_t* layout;
-    int nbytes;
+    bool transient_layout;
     float draw_x;
     float draw_y;
+    int i;
+    int index;
+    size_t text_len;
+    n64_wad_text_cache_entry_t* entry;
+    rdpq_textparms_t parms;
+    int nbytes;
 
     if (!text || width <= 0)
         return;
 
-    memset(&parms, 0, sizeof(parms));
-    parms.style_id = style;
-    parms.width = width;
-    parms.align = ALIGN_LEFT;
-    parms.valign = VALIGN_TOP;
-    parms.wrap = WRAP_ELLIPSES;
+    layout = NULL;
+    transient_layout = false;
+    text_len = strlen(text);
 
-    nbytes = (int)strlen(text);
-    layout = rdpq_paragraph_build(&parms, N64_WAD_FONT_ID, text, &nbytes);
-    if (!layout)
-        return;
+    if (text_len < N64_WAD_TEXT_CACHE_TEXT_MAX)
+    {
+        for (i = 0; i < N64_WAD_TEXT_CACHE_SIZE; i++)
+        {
+            entry = &n64_text_cache[i];
+            if (!entry->in_use)
+                continue;
+
+            if (entry->style == style
+                && entry->width == width
+                && !strcmp(entry->text, text))
+            {
+                layout = entry->layout;
+                break;
+            }
+        }
+
+        if (!layout)
+        {
+            index = -1;
+            for (i = 0; i < N64_WAD_TEXT_CACHE_SIZE; i++)
+            {
+                if (!n64_text_cache[i].in_use)
+                {
+                    index = i;
+                    break;
+                }
+            }
+
+            if (index < 0)
+            {
+                index = n64_text_cache_evict;
+                n64_text_cache_evict = (n64_text_cache_evict + 1) % N64_WAD_TEXT_CACHE_SIZE;
+            }
+
+            entry = &n64_text_cache[index];
+            if (entry->layout)
+                rdpq_paragraph_free(entry->layout);
+
+            memset(&parms, 0, sizeof(parms));
+            parms.style_id = style;
+            parms.width = width;
+            parms.align = ALIGN_LEFT;
+            parms.valign = VALIGN_TOP;
+            parms.wrap = WRAP_ELLIPSES;
+
+            nbytes = (int)text_len;
+            entry->layout = rdpq_paragraph_build(&parms, N64_WAD_FONT_ID, text, &nbytes);
+            if (!entry->layout)
+            {
+                entry->in_use = false;
+                entry->text[0] = '\0';
+                return;
+            }
+
+            entry->style = style;
+            entry->width = width;
+            strcpy(entry->text, text);
+            entry->in_use = true;
+            layout = entry->layout;
+        }
+    }
+    else
+    {
+        memset(&parms, 0, sizeof(parms));
+        parms.style_id = style;
+        parms.width = width;
+        parms.align = ALIGN_LEFT;
+        parms.valign = VALIGN_TOP;
+        parms.wrap = WRAP_ELLIPSES;
+
+        nbytes = (int)text_len;
+        layout = rdpq_paragraph_build(&parms, N64_WAD_FONT_ID, text, &nbytes);
+        if (!layout)
+            return;
+
+        transient_layout = true;
+    }
 
     draw_x = (float)x - layout->bbox.x0;
     draw_y = (float)y - layout->bbox.y0;
 
     rdpq_paragraph_render(layout, draw_x, draw_y);
-    rdpq_paragraph_free(layout);
+
+    if (transient_layout)
+        rdpq_paragraph_free(layout);
 }
 
 static void I_InitTextRenderer(void)
 {
+    int i;
+
+    for (i = 0; i < N64_WAD_TEXT_CACHE_SIZE; i++)
+    {
+        n64_text_cache[i].style = 0;
+        n64_text_cache[i].width = 0;
+        n64_text_cache[i].text[0] = '\0';
+        n64_text_cache[i].layout = NULL;
+        n64_text_cache[i].in_use = false;
+    }
+    n64_text_cache_evict = 0;
+
     n64_wad_font = rdpq_font_load_builtin(FONT_BUILTIN_DEBUG_MONO);
     assertf(n64_wad_font != NULL, "WAD browser: failed loading builtin font");
 
@@ -525,8 +630,22 @@ static void I_InitTextRenderer(void)
 
 static void I_ShutdownTextRenderer(void)
 {
+    int i;
+
     if (!n64_wad_font)
         return;
+
+    for (i = 0; i < N64_WAD_TEXT_CACHE_SIZE; i++)
+    {
+        if (n64_text_cache[i].layout)
+        {
+            rdpq_paragraph_free(n64_text_cache[i].layout);
+            n64_text_cache[i].layout = NULL;
+        }
+
+        n64_text_cache[i].in_use = false;
+        n64_text_cache[i].text[0] = '\0';
+    }
 
     rdpq_text_unregister_font(N64_WAD_FONT_ID);
     rdpq_font_free(n64_wad_font);
@@ -873,11 +992,24 @@ static void I_RunFallbackLoop(void)
 void I_N64RunWadBrowser(void)
 {
     int selected_index;
+    uint32_t existing_buffers;
 
     I_ScanWadEntries();
     N64_DEBUGF("WAD browser: entering UI with %d entries\n", n64_wad_count);
+    I_N64LogMemoryStats("wad_browser:enter");
 
-    display_init(RESOLUTION_320x240, DEPTH_16_BPP, 3, GAMMA_NONE, FILTERS_RESAMPLE);
+    existing_buffers = display_get_num_buffers();
+    N64_DEBUGF("WAD browser: display_get_num_buffers()=%u\n", (unsigned)existing_buffers);
+    if (existing_buffers == 0)
+    {
+        N64_DEBUGF("WAD browser: calling display_init (fresh)\n");
+        display_init(RESOLUTION_320x240, DEPTH_16_BPP, 3, GAMMA_NONE, FILTERS_RESAMPLE);
+    }
+    else
+    {
+        N64_DEBUGF("WAD browser: reusing existing display\n");
+    }
+
     display_set_fps_limit(60.0f);
     rdpq_init();
     I_InitPalette();
@@ -887,9 +1019,11 @@ void I_N64RunWadBrowser(void)
     {
         I_RunFallbackLoop();
         N64_DEBUGF("WAD browser: no entries, selected path=%s\n", n64_selected_wad);
+        I_N64LogMemoryStats("wad_browser:before_exit");
         rspq_wait();
         I_ShutdownTextRenderer();
         rdpq_close();
+        I_N64LogMemoryStats("wad_browser:after_exit");
         return;
     }
 
@@ -903,9 +1037,11 @@ void I_N64RunWadBrowser(void)
 
     N64_DEBUGF("WAD browser: final selected path=%s\n", n64_selected_wad);
 
+    I_N64LogMemoryStats("wad_browser:before_exit");
     rspq_wait();
     I_ShutdownTextRenderer();
     rdpq_close();
+    I_N64LogMemoryStats("wad_browser:after_exit");
 }
 
 const char* I_N64GetSelectedWadPath(void)

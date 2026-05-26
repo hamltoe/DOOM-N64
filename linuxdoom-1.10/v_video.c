@@ -481,6 +481,10 @@ V_GetBlock
 // 
 void V_Init (void) 
 { 
+#ifdef N64
+    memset(screens, 0, sizeof(screens));
+    return;
+#else
     int		i;
     byte*	base;
 		
@@ -490,4 +494,5 @@ void V_Init (void)
 
     for (i=0 ; i<4 ; i++)
 	screens[i] = base + i*SCREENWIDTH*SCREENHEIGHT;
+#endif
 }

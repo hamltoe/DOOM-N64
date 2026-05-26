@@ -88,6 +88,10 @@ void I_Tactile (int on, int off, int total);
 
 void I_Error (char *error, ...);
 
+#ifdef N64
+void I_N64LogMemoryStats (const char* tag);
+#endif
+
 
 #endif
 //-----------------------------------------------------------------------------

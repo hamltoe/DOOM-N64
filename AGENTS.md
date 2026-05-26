@@ -1,4 +1,4 @@
-# Project Purpose
+# Project Summary
 This project is a software port of the original DOOM game for PC modified to run on the N64.
 
 # Building The Project

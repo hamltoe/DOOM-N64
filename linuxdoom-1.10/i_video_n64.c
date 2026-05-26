@@ -318,6 +318,7 @@ void I_StartTic(void)
 {
     joypad_inputs_t inputs;
     joypad_buttons_t buttons;
+    joypad_buttons_t pressed;
     int stick_x;
     int stick_y;
     int joy_x;
@@ -326,6 +327,7 @@ void I_StartTic(void)
     joypad_poll();
     inputs = joypad_get_inputs(JOYPAD_PORT_1);
     buttons = inputs.btn;
+    pressed = joypad_get_buttons_pressed(JOYPAD_PORT_1);
 
     stick_x = I_NormalizeStickAxis(inputs.stick_x);
     stick_y = I_NormalizeStickAxis(inputs.stick_y);
@@ -350,11 +352,12 @@ void I_StartTic(void)
 
     I_UpdateKeyState(buttons.start, KEYIDX_MENU, KEY_ESCAPE);
     I_UpdateKeyState(buttons.l, KEYIDX_MAP_TOGGLE, KEY_TAB);
-    I_UpdateKeyState((buttons.a && menuactive), KEYIDX_A_MENU_ENTER, KEY_ENTER);
+    // Menu buttons should fire on fresh presses to avoid carry-over from held gameplay inputs.
+    I_UpdateKeyState((pressed.a && menuactive), KEYIDX_A_MENU_ENTER, KEY_ENTER);
     I_UpdateKeyState(((buttons.a || buttons.z || buttons.r) && !menuactive), KEYIDX_A_USE, KEY_RCTRL);
-    I_UpdateKeyState((buttons.b && menuactive), KEYIDX_B_MENU_BACK, KEY_BACKSPACE);
-    I_UpdateKeyState((menuactive && (buttons.c_down || buttons.r || buttons.y)), KEYIDX_MENU_CONFIRM_Y, 'y');
-    I_UpdateKeyState((menuactive && (buttons.z || buttons.x)), KEYIDX_MENU_CONFIRM_N, 'n');
+    I_UpdateKeyState((pressed.b && menuactive), KEYIDX_B_MENU_BACK, KEY_BACKSPACE);
+    I_UpdateKeyState((menuactive && (pressed.c_down || pressed.r || pressed.y)), KEYIDX_MENU_CONFIRM_Y, 'y');
+    I_UpdateKeyState((menuactive && (pressed.z || pressed.x)), KEYIDX_MENU_CONFIRM_N, 'n');
     I_UpdateKeyState(((buttons.b || buttons.c_down) && !menuactive), KEYIDX_FIRE, ' ');
 
     I_UpdateKeyState(buttons.c_left, KEYIDX_STRAFE_LEFT, ',');

@@ -15,9 +15,8 @@
 #include "g_game.h"
 #include "i_system.h"
 #include "n64_debug.h"
-#include "i_main_n64.h"
 
-int mb_used = 5;
+int mb_used = 4;
 
 static byte* zone_base;
 
@@ -40,7 +39,7 @@ ticcmd_t* I_BaseTiccmd(void)
 byte* I_ZoneBase(int* size)
 {
     if (is_memory_expanded())
-        mb_used = 4;  // 4MB Zone leaves ~3MB for SFX PCM + mixer buffers on 8MB hardware
+        mb_used = 4;
     else
         mb_used = 2;
 
@@ -80,7 +79,7 @@ void I_Quit(void)
     I_ShutdownMusic();
     M_SaveDefaults();
     I_ShutdownGraphics();
-    I_N64ReturnToBrowser();
+    exit(0);
 }
 
 void I_WaitVBL(int count)

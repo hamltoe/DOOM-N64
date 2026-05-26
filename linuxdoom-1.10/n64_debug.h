@@ -14,7 +14,6 @@
 #endif
 
 #if DOOM_N64_DEBUG
-#include <debug.h>
 #define N64_DEBUGF(...) debugf(__VA_ARGS__)
 #else
 #define N64_DEBUGF(...) ((void)0)

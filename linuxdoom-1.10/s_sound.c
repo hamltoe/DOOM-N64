@@ -185,6 +185,17 @@ void S_Init
   
   // no sounds are playing, and they are not mus_paused
   mus_paused = 0;
+    mus_playing = 0;
+
+    // Re-entering via N64 WAD browser reuses process globals.
+    // Clear cached music lump/runtime fields so next session resolves
+    // against the newly loaded IWAD tables.
+    for (i=1 ; i<NUMMUSIC ; i++)
+    {
+        S_music[i].lumpnum = 0;
+        S_music[i].data = 0;
+        S_music[i].handle = 0;
+    }
 
   // Note that sounds have not been cached (yet).
   for (i=1 ; i<NUMSFX ; i++)

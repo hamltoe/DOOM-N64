@@ -78,6 +78,8 @@ int		maxsend;	// BACKUPTICS/(2*ticdup)-1
 void D_ProcessEvents (void); 
 void G_BuildTiccmd (ticcmd_t *cmd); 
 void D_DoAdvanceDemo (void);
+
+static void D_ResetNetRuntimeState(void);
  
 boolean		reboundpacket;
 doomdata_t	reboundstore;
@@ -555,6 +557,8 @@ extern	int			viewangleoffset;
 void D_CheckNetGame (void)
 {
     int             i;
+
+	D_ResetNetRuntimeState();
 	
     for (i=0 ; i<MAXNETNODES ; i++)
     {
@@ -630,15 +634,41 @@ int	frametics[4];
 int	frameon;
 int	frameskip[4];
 int	oldnettics;
+int	d_net_oldentertics;
 
 extern	boolean	advancedemo;
+
+static void D_ResetNetRuntimeState(void)
+{
+	memset(localcmds, 0, sizeof(localcmds));
+	memset(netcmds, 0, sizeof(netcmds));
+	memset(nettics, 0, sizeof(nettics));
+	memset(nodeingame, 0, sizeof(nodeingame));
+	memset(remoteresend, 0, sizeof(remoteresend));
+	memset(resendto, 0, sizeof(resendto));
+	memset(resendcount, 0, sizeof(resendcount));
+	memset(nodeforplayer, 0, sizeof(nodeforplayer));
+	memset(frametics, 0, sizeof(frametics));
+	memset(frameskip, 0, sizeof(frameskip));
+
+	reboundpacket = false;
+	memset(&reboundstore, 0, sizeof(reboundstore));
+
+	maketic = 0;
+	gametic = 0;
+	lastnettic = 0;
+	skiptics = 0;
+	gametime = 0;
+	frameon = 0;
+	oldnettics = 0;
+	d_net_oldentertics = 0;
+}
 
 void TryRunTics (void)
 {
     int		i;
     int		lowtic;
     int		entertic;
-    static int	oldentertics;
     int		realtics;
     int		availabletics;
     int		counts;
@@ -646,8 +676,8 @@ void TryRunTics (void)
     
     // get real tics		
     entertic = I_GetTime ()/ticdup;
-    realtics = entertic - oldentertics;
-    oldentertics = entertic;
+	realtics = entertic - d_net_oldentertics;
+	d_net_oldentertics = entertic;
     
     // get available tics
     NetUpdate ();

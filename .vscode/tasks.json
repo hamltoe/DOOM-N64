@@ -11,6 +11,17 @@
 				"cd /mnt/c/Users/ton_o/DOOM-N64 && N64_GCCPREFIX=/opt/libdragon N64_INST=/mnt/c/Users/ton_o/DOOM-N64/libdragon make -j4"
 			],
 			"isBackground": false
+		},
+		{
+			"label": "build-doom-debug",
+			"type": "shell",
+			"command": "wsl",
+			"args": [
+				"bash",
+				"-lc",
+				"cd /mnt/c/Users/ton_o/DOOM-N64 && N64_GCCPREFIX=/opt/libdragon N64_INST=/mnt/c/Users/ton_o/DOOM-N64/libdragon make clean && N64_GCCPREFIX=/opt/libdragon N64_INST=/mnt/c/Users/ton_o/DOOM-N64/libdragon make DEBUG=1 -j4"
+			],
+			"isBackground": false
 		}
 	]
 }

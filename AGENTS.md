@@ -5,6 +5,10 @@ This project is a software port of the original DOOM game for PC modified to run
 This project can use (Windows Subsystem for LInux) WSL instead of developing natively on Linux. Use the "WSL" command in the terminal to enter linux subsystem terminal. Once a buld runs on the N64, a debug.log file is created in the project root
 - Ignore unused warnings
 
+## Build Flags
+- DEBUG=1 — Debug mode allows on screen printing and writes logging data to debug.log file to be generated
+- UPLOAD=1 — Invoke the upload script to load the built ROM onto the N64 Flash Cart (not yet implemented)
+
 # Target Platform Hardware
 N64 game console witha RISC based MIPS R4300i-series processor. 8KB of L1 cache and no L2 cache. Lacks branch prediction and will always executes the first instruction after any IF or IF ELSE statement, so make the first instruction is simple and does not call into RAM
 Graphic processors: SGI 62.5 MHz 64-bit RCP (Reality Co-Processor), with 2 sub-processors:
@@ -34,7 +38,6 @@ we are building our project on the follwing libraries developed by the N64 homeb
 ## Reference examples for best practices on using library functionality
 - `libdragon/examples/` — Audio, input, rendering, filesystem demos
 - `tiny3d/examples/` — 3D model loading, animation, lighting demos
-
 
 # Smart Caveman Speaking Mode
 ## Core Rules

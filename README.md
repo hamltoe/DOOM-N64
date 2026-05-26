@@ -16,8 +16,9 @@ Current build produces:
 - build/doom.dfs
 
 IWAD handling:
-- Place your legally owned DOOM.WAD in WADs/DOOM.WAD
-- Build will copy it to filesystem/doom.wad automatically
+- Place your legally owned .WAD files in WADs/
+- Build syncs all .wad/.WAD files from WADs/ into filesystem/
+- Keep at least one IWAD (for example DOOM.WAD)
 
 ## Windows Build (WSL)
 
@@ -47,12 +48,12 @@ If already cloned without submodules:
 git submodule update --init --recursive
 ```
 
-### 3) Put IWAD in place
+### 3) Put WAD files in place
 
-Copy your legally owned DOOM.WAD (or another compatible WAD file) to the WADs folder:
+Copy your legally owned WAD files to the WADs folder:
 
 ```text
-WADs/DOOM.WAD
+WADs/DOOM1.WAD
 ```
 
 ### 4) Set environment variables in WSL
@@ -110,13 +111,13 @@ Fix:
 - Run the one-time local libdragon install step above
 - Confirm PATH contains $N64_INST/bin
 
-### Missing IWAD: place your legally-owned DOOM.WAD ...
+### Missing IWAD: place your legally-owned WAD files in WADs/ ...
 
 Cause:
-- WADs/DOOM.WAD not present
+- No IWAD available in WADs/ and filesystem/doom.wad missing
 
 Fix:
-- Add your DOOM.WAD to WADs/DOOM.WAD and rebuild
+- Add at least one legally owned IWAD to WADs/ and rebuild
 
 ## Repository Notes
 

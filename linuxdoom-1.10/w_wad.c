@@ -351,6 +351,38 @@ void W_Reload (void)
 void W_InitMultipleFiles (char** filenames)
 {	
     int		size;
+    int         i;
+    int         last_handle;
+
+    // Reinitialization support (N64 browser relaunch): close old files and free tables.
+    if (lumpinfo && numlumps > 0)
+    {
+	last_handle = -2;
+	for (i = 0; i < numlumps; i++)
+	{
+	    int handle = lumpinfo[i].handle;
+	    if (handle >= 0 && handle != last_handle)
+	    {
+		close(handle);
+		last_handle = handle;
+	    }
+	}
+    }
+
+    if (lumpinfo)
+    {
+	free(lumpinfo);
+	lumpinfo = NULL;
+    }
+
+    if (lumpcache)
+    {
+	free(lumpcache);
+	lumpcache = NULL;
+    }
+
+    reloadname = NULL;
+	reloadlump = 0;
     
     // open all the files, load headers, and count lumps
     numlumps = 0;

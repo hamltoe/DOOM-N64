@@ -1,12 +1,28 @@
 // N64 entrypoint for the DOOM port.
 
+#include <setjmp.h>
+#include <stdlib.h>
+
 #include <libdragon.h>
 
 #include "doomdef.h"
 #include "m_argv.h"
 #include "d_main.h"
+#include "i_wad_browser_n64.h"
+#include "i_main_n64.h"
 
 static char* n64_argv[] = { "doom", NULL };
+static jmp_buf n64_browser_return;
+static int n64_browser_return_armed;
+
+void I_N64ReturnToBrowser(void)
+{
+    if (n64_browser_return_armed)
+        longjmp(n64_browser_return, 1);
+
+    // Fallback behavior if called before main loop is armed.
+    exit(0);
+}
 
 int main(void)
 {
@@ -19,9 +35,18 @@ int main(void)
     dfs_init(DFS_DEFAULT_LOCATION);
     joypad_init();
 
-    myargc = 1;
-    myargv = n64_argv;
+    for (;;)
+    {
+        (void)setjmp(n64_browser_return);
+        n64_browser_return_armed = 1;
 
-    D_DoomMain();
+        I_N64RunWadBrowser();
+
+        myargc = 1;
+        myargv = n64_argv;
+
+        D_DoomMain();
+    }
+
     return 0;
 }

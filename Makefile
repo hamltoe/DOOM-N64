@@ -23,8 +23,6 @@ SOURCE_DIR = .
 DOOM_SRC = linuxdoom-1.10
 N64_MKDFS_ROOT = filesystem
 
-DEBUG ?= 0
-
 ifneq ($(wildcard $(N64_INST)/n64.mk),)
 include $(N64_INST)/n64.mk
 else
@@ -34,7 +32,6 @@ endif
 N64_ROM_TITLE = "DOOM N64 WIP"
 
 CFLAGS += -I$(DOOM_SRC)
-CFLAGS += -DDEBUG=$(DEBUG)
 ifeq ($(strip $(wildcard $(REQUESTED_N64_INST)/mips64-elf/include/ktls.h) $(wildcard $(REQUESTED_N64_INST)/include/ktls.h)),)
 ifneq ($(wildcard $(CURDIR)/libdragon/include/ktls.h),)
 CFLAGS += -I$(CURDIR)/libdragon/include
@@ -112,6 +109,7 @@ DOOM_COMMON_SRCS = \
 
 DOOM_PLATFORM_SRCS = \
 	$(DOOM_SRC)/i_main_n64.c \
+	$(DOOM_SRC)/i_wad_browser_n64.c \
 	$(DOOM_SRC)/i_system_n64.c \
 	$(DOOM_SRC)/i_video_n64.c \
 	$(DOOM_SRC)/i_sound_n64.c \
@@ -134,23 +132,14 @@ MUSIC_ASSETS_CONV = \
 all: doom.z64
 .PHONY: all clean check-wad
 
-IWAD_DST = filesystem/doom.wad
-IWAD_SRC = WADs/DOOM.WAD
-
 $(BUILD_DIR)/doom.elf: $(OBJS)
 
 doom.z64: $(BUILD_DIR)/doom.dfs
 
 check-wad:
-	@mkdir -p $(dir $(IWAD_DST))
-	@if [ ! -f $(IWAD_DST) ]; then \
-		if [ -f $(IWAD_SRC) ]; then \
-			echo "    [IWAD] Copying $(IWAD_SRC) -> $(IWAD_DST)"; \
-			cp "$(IWAD_SRC)" "$(IWAD_DST)"; \
-		else \
-			echo "Missing IWAD: place your legally-owned DOOM.WAD at $(IWAD_SRC) (or $(IWAD_DST))"; \
-			exit 1; \
-		fi; \
+	@if [ ! -f filesystem/doom.wad ]; then \
+		echo "Missing IWAD: place your legally-owned DOOM.WAD at filesystem/doom.wad"; \
+		exit 1; \
 	fi
 
 filesystem/music/%.xm64: assets/music/%.xm

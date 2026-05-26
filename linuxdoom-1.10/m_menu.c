@@ -1840,12 +1840,45 @@ void M_Ticker (void)
     }
 }
 
+static void M_ResetMenuConfiguration(void)
+{
+    MainMenu[readthis].status = 1;
+    strcpy(MainMenu[readthis].name, "M_RDTHIS");
+    MainMenu[readthis].routine = M_ReadThis;
+    MainMenu[readthis].alphaKey = 'r';
+
+    MainDef.numitems = main_end;
+    MainDef.y = 64;
+    MainDef.lastOn = 0;
+
+    EpiDef.numitems = ep_end;
+    EpiDef.lastOn = ep1;
+
+    NewDef.prevMenu = &EpiDef;
+    NewDef.lastOn = hurtme;
+
+    ReadDef1.routine = M_DrawReadThis1;
+    ReadDef1.x = 280;
+    ReadDef1.y = 185;
+    ReadDef1.lastOn = 0;
+
+    ReadDef2.lastOn = 0;
+    OptionsDef.lastOn = 0;
+    SoundDef.lastOn = 0;
+    LoadDef.lastOn = 0;
+    SaveDef.lastOn = 0;
+
+    ReadMenu1[0].routine = M_ReadThis2;
+}
+
 
 //
 // M_Init
 //
 void M_Init (void)
 {
+    M_ResetMenuConfiguration();
+
     currentMenu = &MainDef;
     menuactive = 0;
     itemOn = currentMenu->lastOn;
@@ -1855,7 +1888,13 @@ void M_Init (void)
     messageToPrint = 0;
     messageString = NULL;
     messageLastMenuActive = menuactive;
+    messageNeedsInput = false;
+    messageRoutine = NULL;
     quickSaveSlot = -1;
+    saveStringEnter = 0;
+    saveSlot = 0;
+    saveCharIndex = 0;
+    inhelpscreens = false;
 
     // Here we could catch other version dependencies,
     //  like HELP1/2, and four episodes.

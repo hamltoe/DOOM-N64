@@ -1,1 +1,0 @@
-Place your doom WAD/IWAD file in this folder.

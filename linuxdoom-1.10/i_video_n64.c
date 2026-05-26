@@ -1,5 +1,6 @@
 // N64 video and input layer using libdragon + RDPQ.
 
+#include <stdlib.h>
 #include <string.h>
 
 #include <libdragon.h>
@@ -10,9 +11,12 @@
 #include "i_system.h"
 #include "i_video.h"
 #include "v_video.h"
+#include "n64_debug.h"
 
 static boolean video_initialized;
 static surface_t doom_screen8;
+static byte* n64_aux_screens[3];
+static boolean n64_aux_screen_owned[3];
 static uint16_t doom_tlut[256] __attribute__((aligned(8)));
 static uint64_t last_menu_present_ms;
 
@@ -28,6 +32,8 @@ enum
     KEYIDX_A_MENU_ENTER,
     KEYIDX_A_USE,
     KEYIDX_B_MENU_BACK,
+    KEYIDX_MENU_CONFIRM_Y,
+    KEYIDX_MENU_CONFIRM_N,
     KEYIDX_FIRE,
     KEYIDX_STRAFE_LEFT,
     KEYIDX_STRAFE_RIGHT,
@@ -277,10 +283,25 @@ static void I_UpdateWeaponSelect(boolean down, boolean next, boolean* select_dow
 
 void I_ShutdownGraphics(void)
 {
+    int i;
+
     if (!video_initialized)
         return;
 
+    for (i = 0; i < 3; i++)
+    {
+        if (n64_aux_screen_owned[i] && n64_aux_screens[i])
+        {
+            free(n64_aux_screens[i]);
+        }
+
+        n64_aux_screens[i] = NULL;
+        n64_aux_screen_owned[i] = false;
+        screens[i + 1] = NULL;
+    }
+
     surface_free(&doom_screen8);
+    screens[0] = NULL;
     rdpq_close();
     display_close();
 
@@ -328,9 +349,11 @@ void I_StartTic(void)
     I_UpdateKeyState(buttons.start, KEYIDX_MENU, KEY_ESCAPE);
     I_UpdateKeyState(buttons.l, KEYIDX_MAP_TOGGLE, KEY_TAB);
     I_UpdateKeyState((buttons.a && menuactive), KEYIDX_A_MENU_ENTER, KEY_ENTER);
-    I_UpdateKeyState(((buttons.a || buttons.z) && !menuactive), KEYIDX_A_USE, KEY_RCTRL);
+    I_UpdateKeyState(((buttons.a || buttons.z || buttons.r) && !menuactive), KEYIDX_A_USE, KEY_RCTRL);
     I_UpdateKeyState((buttons.b && menuactive), KEYIDX_B_MENU_BACK, KEY_BACKSPACE);
-    I_UpdateKeyState((buttons.b && !menuactive), KEYIDX_FIRE, ' ');
+    I_UpdateKeyState((menuactive && (buttons.c_down || buttons.r || buttons.y)), KEYIDX_MENU_CONFIRM_Y, 'y');
+    I_UpdateKeyState((menuactive && (buttons.z || buttons.x)), KEYIDX_MENU_CONFIRM_N, 'n');
+    I_UpdateKeyState(((buttons.b || buttons.c_down) && !menuactive), KEYIDX_FIRE, ' ');
 
     I_UpdateKeyState(buttons.c_left, KEYIDX_STRAFE_LEFT, ',');
     I_UpdateKeyState(buttons.c_right, KEYIDX_STRAFE_RIGHT, '.');
@@ -399,10 +422,25 @@ void I_SetPalette(byte* palette)
 
 void I_InitGraphics(void)
 {
+    int i;
+    size_t aux_size;
+
     if (video_initialized)
         return;
 
-    display_init(RESOLUTION_320x240, DEPTH_16_BPP, 3, GAMMA_NONE, FILTERS_RESAMPLE);
+    uint32_t existing_buffers = display_get_num_buffers();
+    N64_DEBUGF("I_InitGraphics: display_get_num_buffers()=%u\n", (unsigned)existing_buffers);
+    if (existing_buffers > 0)
+    {
+        N64_DEBUGF("I_InitGraphics: reusing display via display_change\n");
+        display_change(RESOLUTION_320x240, DEPTH_16_BPP, 3, GAMMA_NONE, FILTERS_RESAMPLE);
+    }
+    else
+    {
+        N64_DEBUGF("I_InitGraphics: calling display_init (fresh)\n");
+        display_init(RESOLUTION_320x240, DEPTH_16_BPP, 3, GAMMA_NONE, FILTERS_RESAMPLE);
+    }
+
     rdpq_init();
 
     doom_screen8 = surface_alloc(FMT_CI8, SCREENWIDTH, SCREENHEIGHT);
@@ -412,6 +450,42 @@ void I_InitGraphics(void)
 
     screens[0] = (byte*)doom_screen8.buffer;
     memset(screens[0], 0, SCREENWIDTH * SCREENHEIGHT);
+
+    aux_size = (size_t)SCREENWIDTH * (size_t)SCREENHEIGHT;
+    for (i = 0; i < 3; i++)
+    {
+        n64_aux_screens[i] = NULL;
+        n64_aux_screen_owned[i] = false;
+        screens[i + 1] = NULL;
+    }
+
+    n64_aux_screens[0] = (byte*)malloc(aux_size);
+    if (!n64_aux_screens[0])
+        I_Error("I_InitGraphics: failed to allocate scratch screen 1");
+
+    n64_aux_screen_owned[0] = true;
+    memset(n64_aux_screens[0], 0, aux_size);
+    screens[1] = n64_aux_screens[0];
+
+    for (i = 1; i < 3; i++)
+    {
+        n64_aux_screens[i] = (byte*)malloc(aux_size);
+        if (!n64_aux_screens[i])
+        {
+            // Keep running in low-memory scenarios by aliasing to an existing scratch buffer.
+            n64_aux_screens[i] = n64_aux_screens[i - 1];
+            n64_aux_screen_owned[i] = false;
+            N64_DEBUGF("I_InitGraphics: scratch screen %d fallback alias\n", i + 1);
+        }
+        else
+        {
+            n64_aux_screen_owned[i] = true;
+            memset(n64_aux_screens[i], 0, aux_size);
+        }
+
+        screens[i + 1] = n64_aux_screens[i];
+    }
+
     memset(doom_tlut, 0, sizeof(doom_tlut));
     memset(key_state, 0, sizeof(key_state));
     weapon_cycle_down = false;

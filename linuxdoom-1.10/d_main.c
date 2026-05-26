@@ -39,6 +39,9 @@ static const char rcsid[] = "$Id: d_main.c,v 1.8 1997/02/03 22:45:09 b1 Exp $";
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
+#ifndef O_BINARY
+#define O_BINARY 0
+#endif
 #endif
 
 
@@ -77,6 +80,11 @@ static const char rcsid[] = "$Id: d_main.c,v 1.8 1997/02/03 22:45:09 b1 Exp $";
 
 
 #include "d_main.h"
+#ifdef N64
+#include "i_wad_browser_n64.h"
+#include "i_main_n64.h"
+#include "n64_debug.h"
+#endif
 
 //
 // D-DoomLoop()
@@ -557,7 +565,131 @@ void D_AddFile (char *file)
     strcpy (newfile, file);
 	
     wadfiles[numwadfiles] = newfile;
+
+#ifdef N64
+	N64_DEBUGF("D_AddFile[%d]: %s\n", numwadfiles, newfile);
+#endif
 }
+
+#ifdef N64
+static void D_N64ResetWadFileList(void)
+{
+	int i;
+
+	for (i = 0; i < MAXWADFILES; i++)
+	{
+		if (wadfiles[i])
+		{
+			free(wadfiles[i]);
+			wadfiles[i] = NULL;
+		}
+	}
+}
+
+static int D_N64StrCaseCmp(const char* left, const char* right)
+{
+	unsigned char lc;
+	unsigned char rc;
+
+	if (!left || !right)
+		return (left == right) ? 0 : (left ? 1 : -1);
+
+	for (;;)
+	{
+		lc = (unsigned char)(*left++);
+		rc = (unsigned char)(*right++);
+
+		if (lc >= 'A' && lc <= 'Z')
+			lc = (unsigned char)(lc + ('a' - 'A'));
+		if (rc >= 'A' && rc <= 'Z')
+			rc = (unsigned char)(rc + ('a' - 'A'));
+
+		if (lc != rc || !lc || !rc)
+			return (int)lc - (int)rc;
+	}
+}
+
+static const char* D_N64BaseName(const char* path)
+{
+	const char* base;
+
+	base = path;
+	if (!path)
+		return "";
+
+	while (*path)
+	{
+		if (*path == '/' || *path == '\\')
+			base = path + 1;
+		path++;
+	}
+
+	return base;
+}
+
+static GameMode_t D_N64GamemodeFromWad(const char* path)
+{
+	const char* name;
+
+	name = D_N64BaseName(path);
+
+	if (!D_N64StrCaseCmp(name, "doom1.wad"))
+		return shareware;
+
+	if (!D_N64StrCaseCmp(name, "doomu.wad"))
+		return retail;
+
+	if (!D_N64StrCaseCmp(name, "doom2.wad")
+		|| !D_N64StrCaseCmp(name, "doom2f.wad")
+		|| !D_N64StrCaseCmp(name, "plutonia.wad")
+		|| !D_N64StrCaseCmp(name, "tnt.wad"))
+	{
+		return commercial;
+	}
+
+	if (!D_N64StrCaseCmp(name, "doom.wad"))
+		return registered;
+
+	return registered;
+}
+
+static int D_N64ValidateIwad(const char* path)
+{
+	int fd;
+	int bytes_read;
+	unsigned char sig[4];
+
+	if (!path || !path[0])
+		return 0;
+
+	fd = open(path, O_RDONLY | O_BINARY);
+	if (fd < 0)
+	{
+		N64_DEBUGF("IdentifyVersion: open failed for %s\n", path);
+		return 0;
+	}
+
+	bytes_read = (int)read(fd, sig, sizeof(sig));
+	close(fd);
+
+	if (bytes_read != (int)sizeof(sig))
+	{
+		N64_DEBUGF("IdentifyVersion: short read on %s\n", path);
+		return 0;
+	}
+
+	if (sig[0] == 'I' && sig[1] == 'W' && sig[2] == 'A' && sig[3] == 'D')
+		return 1;
+
+	N64_DEBUGF("IdentifyVersion: %s header=%c%c%c%c (expected IWAD)\n",
+		path,
+		sig[0],
+		sig[1],
+		sig[2],
+		sig[3]);
+	return 0;
+}
+#endif
 
 //
 // IdentifyVersion
@@ -569,8 +701,25 @@ void IdentifyVersion (void)
 {
 
 #ifdef N64
-	gamemode = registered;
-	D_AddFile ("rom:/doom.wad");
+	const char* selected_wad;
+
+	selected_wad = I_N64GetSelectedWadPath();
+	if (!selected_wad || !selected_wad[0])
+	    selected_wad = "rom:/doom.wad";
+
+	N64_DEBUGF("IdentifyVersion: selected_wad=%s\n", selected_wad);
+
+	if (!D_N64ValidateIwad(selected_wad))
+	{
+	    N64_DEBUGF("IdentifyVersion: incompatible selected_wad=%s, returning to browser\n",
+	              selected_wad);
+	    I_N64ReturnToBrowser();
+	    return;
+	}
+
+	gamemode = D_N64GamemodeFromWad(selected_wad);
+	N64_DEBUGF("IdentifyVersion: gamemode=%d\n", (int)gamemode);
+	D_AddFile ((char*)selected_wad);
 	strcpy (basedefault, "doom.cfg");
 	return;
 #else
@@ -812,6 +961,10 @@ void D_DoomMain (void)
     char                    file[256];
 
     FindResponseFile ();
+
+#ifdef N64
+	D_N64ResetWadFileList();
+#endif
 	
     IdentifyVersion ();
 	
@@ -1031,6 +1184,15 @@ void D_DoomMain (void)
     Z_Init ();
 
     printf ("W_Init: Init WADfiles.\n");
+
+#ifdef N64
+	{
+	int wad_index;
+	for (wad_index = 0; wadfiles[wad_index]; wad_index++)
+	    N64_DEBUGF("W_InitMultipleFiles input[%d]=%s\n", wad_index, wadfiles[wad_index]);
+	}
+#endif
+
     W_InitMultipleFiles (wadfiles);
     
 

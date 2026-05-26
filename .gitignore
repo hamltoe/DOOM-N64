@@ -58,7 +58,13 @@ $RECYCLE.BIN/
 
 # Built Visual Studio Code Extensions
 *.vsix
+
+# Do not include WAD files, potential licensing issues
 *.WAD
+
+# Include the shareware demo WAD file
+!WADs/DOOM1.WAD
+
 build
 *.z64
 *.log

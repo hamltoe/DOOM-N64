@@ -702,24 +702,45 @@ void IdentifyVersion (void)
 
 #ifdef N64
 	const char* selected_wad;
+	const char* base_iwad;
+	int selected_is_iwad;
 
 	selected_wad = I_N64GetSelectedWadPath();
 	if (!selected_wad || !selected_wad[0])
 	    selected_wad = "rom:/doom.wad";
+	base_iwad = I_N64GetSelectedBaseIwadPath();
+	if (!base_iwad || !base_iwad[0])
+	    base_iwad = selected_wad;
 
-	N64_DEBUGF("IdentifyVersion: selected_wad=%s\n", selected_wad);
+	N64_DEBUGF("IdentifyVersion: selected_wad=%s base_iwad=%s\n",
+	          selected_wad,
+	          base_iwad);
 
-	if (!D_N64ValidateIwad(selected_wad))
+	selected_is_iwad = D_N64ValidateIwad(selected_wad);
+	if (selected_is_iwad)
+	    base_iwad = selected_wad;
+
+	if (!D_N64ValidateIwad(base_iwad))
 	{
-	    N64_DEBUGF("IdentifyVersion: incompatible selected_wad=%s, returning to browser\n",
-	              selected_wad);
+	    N64_DEBUGF("IdentifyVersion: incompatible base_iwad=%s, returning to browser\n",
+	              base_iwad);
 	    I_N64ReturnToBrowser();
 	    return;
 	}
 
-	gamemode = D_N64GamemodeFromWad(selected_wad);
+	gamemode = D_N64GamemodeFromWad(base_iwad);
 	N64_DEBUGF("IdentifyVersion: gamemode=%d\n", (int)gamemode);
-	D_AddFile ((char*)selected_wad);
+	D_AddFile ((char*)base_iwad);
+
+	if (!selected_is_iwad)
+	{
+	    modifiedgame = true;
+	    D_AddFile ((char*)selected_wad);
+	    N64_DEBUGF("IdentifyVersion: loading PWAD %s on base IWAD %s\n",
+	              selected_wad,
+	              base_iwad);
+	}
+
 	strcpy (basedefault, "doom.cfg");
 	return;
 #else
@@ -970,6 +991,19 @@ void D_DoomMain (void)
 	
     setbuf (stdout, NULL);
     modifiedgame = false;
+
+#ifdef N64
+    {
+	int n64_wadfile_count;
+
+	n64_wadfile_count = 0;
+	while (n64_wadfile_count < MAXWADFILES && wadfiles[n64_wadfile_count])
+	    n64_wadfile_count++;
+
+	if (n64_wadfile_count > 1)
+	    modifiedgame = true;
+    }
+#endif
 	
     nomonsters = M_CheckParm ("-nomonsters");
     respawnparm = M_CheckParm ("-respawn");

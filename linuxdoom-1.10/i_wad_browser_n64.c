@@ -63,6 +63,7 @@ static n64_wad_entry_t n64_wad_entries[N64_WAD_MAX_ENTRIES];
 static int n64_wad_count;
 static int n64_wad_compatible_count;
 static char n64_selected_wad[N64_WAD_PATH_LEN] = "rom:/doom.wad";
+static char n64_selected_base_iwad[N64_WAD_PATH_LEN] = "rom:/doom.wad";
 static rdpq_font_t* n64_wad_font;
 
 typedef struct n64_wad_text_cache_entry_s
@@ -155,6 +156,8 @@ static int I_HasWadExtension(const char* name)
 
 static void I_CopyTruncated(char* dst, size_t dst_size, const char* src)
 {
+    size_t copy_len;
+
     if (!dst || !dst_size)
         return;
 
@@ -164,8 +167,13 @@ static void I_CopyTruncated(char* dst, size_t dst_size, const char* src)
         return;
     }
 
-    strncpy(dst, src, dst_size - 1);
-    dst[dst_size - 1] = '\0';
+    copy_len = strlen(src);
+    if (copy_len >= dst_size)
+        copy_len = dst_size - 1;
+
+    if (copy_len > 0)
+        memcpy(dst, src, copy_len);
+    dst[copy_len] = '\0';
 }
 
 static uint32_t I_ReadLE32(const uint8_t* p)
@@ -196,7 +204,7 @@ static const char* I_CompatMessage(int compat)
     switch (compat)
     {
         case N64_WAD_COMPAT_NOT_IWAD:
-            return "NOT COMPATIBLE: FILE IS PWAD, NEEDS IWAD";
+            return "PWAD: PRESS A TO CHOOSE BASE IWAD";
         case N64_WAD_COMPAT_CORRUPT:
             return "NOT COMPATIBLE: IWAD HEADER OR DIRECTORY INVALID";
         case N64_WAD_COMPAT_OPEN_FAILED:
@@ -210,6 +218,8 @@ static int I_ClassifyWadCompatibility(const char* path, int64_t size_bytes)
 {
     int fd;
     int bytes_read;
+    int is_iwad;
+    int is_pwad;
     uint8_t header[12];
     uint32_t numlumps;
     uint32_t infotableofs;
@@ -253,8 +263,11 @@ static int I_ClassifyWadCompatibility(const char* path, int64_t size_bytes)
     if (bytes_read != (int)sizeof(header))
         return N64_WAD_COMPAT_OPEN_FAILED;
 
-    if (header[0] != 'I' || header[1] != 'W' || header[2] != 'A' || header[3] != 'D')
-        return N64_WAD_COMPAT_NOT_IWAD;
+    is_iwad = (header[0] == 'I' && header[1] == 'W' && header[2] == 'A' && header[3] == 'D');
+    is_pwad = (header[0] == 'P' && header[1] == 'W' && header[2] == 'A' && header[3] == 'D');
+
+    if (!is_iwad && !is_pwad)
+        return N64_WAD_COMPAT_CORRUPT;
 
     numlumps = I_ReadLE32(header + 4);
     infotableofs = I_ReadLE32(header + 8);
@@ -269,7 +282,10 @@ static int I_ClassifyWadCompatibility(const char* path, int64_t size_bytes)
             return N64_WAD_COMPAT_CORRUPT;
     }
 
-    return N64_WAD_COMPAT_OK;
+    if (is_iwad)
+        return N64_WAD_COMPAT_OK;
+
+    return N64_WAD_COMPAT_NOT_IWAD;
 }
 
 static int I_WadPriority(const char* name)
@@ -680,12 +696,12 @@ static void I_DrawStaticFrame(void)
     I_FillRect(309, 62, 1, 142, col_border);
 
     I_DrawTextSafe(18, 9, 152, N64_STYLE_TITLE, "DOOM N64");
-    I_DrawTextSafe(18, 23, 152, N64_STYLE_SUBTITLE, "SELECT IWAD");
+    I_DrawTextSafe(18, 23, 152, N64_STYLE_SUBTITLE, "SELECT WAD");
 
     I_DrawTextSafe(176, 9, 142, N64_STYLE_HINT, "D-PAD: MOVE");
     I_DrawTextSafe(176, 18, 142, N64_STYLE_HINT, "C-UP/DOWN: PAGE");
-    I_DrawTextSafe(176, 27, 142, N64_STYLE_HINT, "A/START: LOAD");
-    I_DrawTextSafe(176, 36, 142, N64_STYLE_HINT, "B: DEFAULT");
+    I_DrawTextSafe(176, 27, 142, N64_STYLE_HINT, "A/START: SELECT");
+    I_DrawTextSafe(176, 36, 142, N64_STYLE_HINT, "B: QUICK IWAD");
 }
 
 static void I_DrawEntryRow(int row, int entry_index, int selected)
@@ -719,8 +735,15 @@ static void I_DrawEntryRow(int row, int entry_index, int selected)
     }
     else
     {
+        int compat_style;
+
         compat_tag = I_CompatTag(entry->compat);
-        I_DrawTextSafe(248, y, 62, N64_STYLE_ERROR, compat_tag);
+        if (entry->compat == N64_WAD_COMPAT_NOT_IWAD)
+            compat_style = selected ? N64_STYLE_SELECTED : N64_STYLE_HINT;
+        else
+            compat_style = N64_STYLE_ERROR;
+
+        I_DrawTextSafe(248, y, 62, compat_style, compat_tag);
     }
 }
 
@@ -773,6 +796,14 @@ static void I_DrawBrowserFrame(int cursor, int page, int reject_notice_ticks)
     {
         I_DrawTextSafe(16, 221, 304, N64_STYLE_TEXT, selected_entry->path);
     }
+    else if (selected_entry->compat == N64_WAD_COMPAT_NOT_IWAD)
+    {
+        I_DrawTextSafe(16,
+                       221,
+                       304,
+                       N64_STYLE_HINT,
+                       I_CompatMessage(selected_entry->compat));
+    }
     else
     {
         I_DrawTextSafe(16,
@@ -797,15 +828,24 @@ static void I_DrawFallbackFrame(void)
     I_DrawTextSafe(16, 221, 304, N64_STYLE_HINT, "B ALSO CONTINUES WITH FALLBACK");
 }
 
-static void I_ClampCursorAndPage(int* cursor, int* page)
+static void I_ClampCursorAndPageForCount(int* cursor, int* page, int count)
 {
+    int max_page;
+
     if (!cursor || !page)
         return;
 
+    if (count <= 0)
+    {
+        *cursor = 0;
+        *page = 0;
+        return;
+    }
+
     if (*cursor < 0)
         *cursor = 0;
-    if (*cursor >= n64_wad_count)
-        *cursor = n64_wad_count - 1;
+    if (*cursor >= count)
+        *cursor = count - 1;
 
     if (*page > *cursor)
         *page = *cursor;
@@ -813,11 +853,213 @@ static void I_ClampCursorAndPage(int* cursor, int* page)
     if (*cursor >= (*page + N64_WAD_VISIBLE_ROWS))
         *page = *cursor - N64_WAD_VISIBLE_ROWS + 1;
 
+    max_page = count - N64_WAD_VISIBLE_ROWS;
+    if (max_page < 0)
+        max_page = 0;
+    if (*page > max_page)
+        *page = max_page;
+
     if (*page < 0)
         *page = 0;
 }
 
-static int I_RunSelectionLoop(void)
+static void I_ClampCursorAndPage(int* cursor, int* page)
+{
+    I_ClampCursorAndPageForCount(cursor, page, n64_wad_count);
+}
+
+static int I_BuildIwadIndexList(int* out_indices, int max_entries)
+{
+    int i;
+    int count;
+
+    if (!out_indices || max_entries <= 0)
+        return 0;
+
+    count = 0;
+    for (i = 0; i < n64_wad_count; i++)
+    {
+        if (n64_wad_entries[i].compat != N64_WAD_COMPAT_OK)
+            continue;
+
+        if (count < max_entries)
+            out_indices[count] = i;
+
+        count++;
+    }
+
+    if (count > max_entries)
+        count = max_entries;
+
+    return count;
+}
+
+static void I_DrawIwadPickerFrame(const char* pwad_name,
+                                  const int* iwad_indices,
+                                  int iwad_count,
+                                  int cursor,
+                                  int page)
+{
+    char footer[64];
+    char pwad_label[48];
+    int i;
+    int index;
+    int entry_index;
+    n64_wad_entry_t* selected_iwad;
+
+    if (!iwad_indices || iwad_count <= 0)
+        return;
+
+    I_DrawStaticFrame();
+    I_DrawTextSafe(18, 23, 152, N64_STYLE_SUBTITLE, "SELECT BASE IWAD");
+    I_DrawTextSafe(176, 36, 142, N64_STYLE_HINT, "B: CANCEL");
+
+    if (pwad_name && pwad_name[0])
+    {
+        I_ClipLabel(pwad_label, sizeof(pwad_label), pwad_name, 34);
+        I_DrawTextSafe(16, 55, 304, N64_STYLE_HINT, pwad_label);
+    }
+
+    for (i = 0; i < N64_WAD_VISIBLE_ROWS; i++)
+    {
+        index = page + i;
+        if (index >= iwad_count)
+            break;
+
+        entry_index = iwad_indices[index];
+        I_DrawEntryRow(i, entry_index, index == cursor);
+    }
+
+    if (page > 0)
+        I_DrawTextSafe(132, 64, 120, N64_STYLE_HINT, "^ MORE ^");
+
+    if ((page + N64_WAD_VISIBLE_ROWS) < iwad_count)
+        I_DrawTextSafe(132, 193, 120, N64_STYLE_HINT, "v MORE v");
+
+    snprintf(footer, sizeof(footer), "BASE IWADS: %d", iwad_count);
+    I_DrawTextSafe(16, 210, 304, N64_STYLE_HINT, footer);
+
+    selected_iwad = &n64_wad_entries[iwad_indices[cursor]];
+    I_DrawTextSafe(16, 221, 304, N64_STYLE_TEXT, selected_iwad->path);
+}
+
+static int I_RunIwadPickerLoop(int pwad_index)
+{
+    int iwad_indices[N64_WAD_MAX_ENTRIES];
+    int iwad_count;
+    joypad_buttons_t pressed;
+    joypad_buttons_t held;
+    joypad_inputs_t inputs;
+    surface_t* disp;
+    int cursor;
+    int page;
+    int move;
+    int preferred_iwad;
+    int i;
+    bool stick_up_latch;
+    bool stick_down_latch;
+    bool input_armed;
+
+    iwad_count = I_BuildIwadIndexList(iwad_indices, N64_WAD_MAX_ENTRIES);
+    if (iwad_count <= 0)
+        return -1;
+
+    preferred_iwad = I_FindEntryByPath(n64_selected_base_iwad);
+    if (preferred_iwad < 0)
+        preferred_iwad = I_FindDefaultEntry();
+    if (preferred_iwad < 0)
+        preferred_iwad = I_FindFirstCompatibleEntry();
+
+    cursor = 0;
+    if (preferred_iwad >= 0)
+    {
+        for (i = 0; i < iwad_count; i++)
+        {
+            if (iwad_indices[i] == preferred_iwad)
+            {
+                cursor = i;
+                break;
+            }
+        }
+    }
+
+    page = 0;
+    stick_up_latch = false;
+    stick_down_latch = false;
+    input_armed = false;
+
+    I_ClampCursorAndPageForCount(&cursor, &page, iwad_count);
+
+    for (;;)
+    {
+        joypad_poll();
+        pressed = joypad_get_buttons_pressed(JOYPAD_PORT_1);
+        held = joypad_get_buttons_held(JOYPAD_PORT_1);
+        inputs = joypad_get_inputs(JOYPAD_PORT_1);
+        move = 0;
+
+        if (!held.raw)
+            input_armed = true;
+
+        if (pressed.d_up)
+            move = -1;
+        else if (pressed.d_down)
+            move = 1;
+        else if (pressed.d_left)
+            move = -N64_WAD_VISIBLE_ROWS;
+        else if (pressed.d_right)
+            move = N64_WAD_VISIBLE_ROWS;
+        else if (pressed.c_up)
+            move = -N64_WAD_VISIBLE_ROWS;
+        else if (pressed.c_down)
+            move = N64_WAD_VISIBLE_ROWS;
+
+        if (inputs.stick_y > 48)
+        {
+            if (!stick_up_latch)
+                move = -1;
+            stick_up_latch = true;
+        }
+        else
+        {
+            stick_up_latch = false;
+        }
+
+        if (inputs.stick_y < -48)
+        {
+            if (!stick_down_latch)
+                move = 1;
+            stick_down_latch = true;
+        }
+        else
+        {
+            stick_down_latch = false;
+        }
+
+        if (move)
+        {
+            cursor += move;
+            I_ClampCursorAndPageForCount(&cursor, &page, iwad_count);
+        }
+
+        if (input_armed && (pressed.a || pressed.start))
+            return iwad_indices[cursor];
+
+        if (input_armed && pressed.b)
+            return -1;
+
+        disp = display_get();
+        rdpq_attach_clear(disp, NULL);
+        I_DrawIwadPickerFrame(n64_wad_entries[pwad_index].name,
+                              iwad_indices,
+                              iwad_count,
+                              cursor,
+                              page);
+        rdpq_detach_show();
+    }
+}
+
+static int I_RunSelectionLoop(int* out_base_iwad_index)
 {
     joypad_buttons_t pressed;
     joypad_buttons_t held;
@@ -827,6 +1069,7 @@ static int I_RunSelectionLoop(void)
     int page;
     int move;
     int default_entry;
+    int selected_base_iwad;
     bool done;
     bool used_default;
     bool stick_up_latch;
@@ -847,6 +1090,7 @@ static int I_RunSelectionLoop(void)
     used_default = false;
     input_armed = false;
     reject_notice_ticks = 0;
+    selected_base_iwad = -1;
 
     while (!done)
     {
@@ -904,7 +1148,23 @@ static int I_RunSelectionLoop(void)
         {
             if (n64_wad_entries[cursor].compat == N64_WAD_COMPAT_OK)
             {
+                selected_base_iwad = cursor;
                 done = true;
+            }
+            else if (n64_wad_entries[cursor].compat == N64_WAD_COMPAT_NOT_IWAD)
+            {
+                selected_base_iwad = I_RunIwadPickerLoop(cursor);
+                if (selected_base_iwad >= 0)
+                {
+                    done = true;
+                }
+                else
+                {
+                    reject_notice_ticks = 60;
+                    N64_DEBUGF("WAD browser: PWAD base IWAD selection canceled index=%d path=%s\n",
+                               cursor,
+                               n64_wad_entries[cursor].path);
+                }
             }
             else
             {
@@ -925,6 +1185,7 @@ static int I_RunSelectionLoop(void)
             if (default_entry >= 0)
             {
                 cursor = default_entry;
+                selected_base_iwad = default_entry;
                 used_default = true;
                 done = true;
             }
@@ -944,17 +1205,34 @@ static int I_RunSelectionLoop(void)
             reject_notice_ticks--;
     }
 
+    if (selected_base_iwad < 0)
+        selected_base_iwad = I_FindFirstCompatibleEntry();
+
+    if (out_base_iwad_index)
+        *out_base_iwad_index = selected_base_iwad;
+
     if (!used_default)
     {
-        N64_DEBUGF("WAD browser: selected index=%d path=%s\n",
-                   cursor,
-                   n64_wad_entries[cursor].path);
+        if (n64_wad_entries[cursor].compat == N64_WAD_COMPAT_NOT_IWAD
+            && selected_base_iwad >= 0)
+        {
+            N64_DEBUGF("WAD browser: selected PWAD index=%d path=%s base_iwad=%s\n",
+                       cursor,
+                       n64_wad_entries[cursor].path,
+                       n64_wad_entries[selected_base_iwad].path);
+        }
+        else
+        {
+            N64_DEBUGF("WAD browser: selected index=%d path=%s\n",
+                       cursor,
+                       n64_wad_entries[cursor].path);
+        }
         return cursor;
     }
 
-    N64_DEBUGF("WAD browser: using default index=%d path=%s\n",
-               cursor,
-               n64_wad_entries[cursor].path);
+    N64_DEBUGF("WAD browser: using quick IWAD index=%d path=%s\n",
+               selected_base_iwad,
+               n64_wad_entries[selected_base_iwad].path);
     return cursor;
 }
 
@@ -992,6 +1270,7 @@ static void I_RunFallbackLoop(void)
 void I_N64RunWadBrowser(void)
 {
     int selected_index;
+    int selected_base_iwad_index;
     uint32_t existing_buffers;
 
     I_ScanWadEntries();
@@ -1018,6 +1297,9 @@ void I_N64RunWadBrowser(void)
     if (!n64_wad_count)
     {
         I_RunFallbackLoop();
+        I_CopyTruncated(n64_selected_base_iwad,
+                        sizeof(n64_selected_base_iwad),
+                        n64_selected_wad);
         N64_DEBUGF("WAD browser: no entries, selected path=%s\n", n64_selected_wad);
         I_N64LogMemoryStats("wad_browser:before_exit");
         rspq_wait();
@@ -1027,15 +1309,43 @@ void I_N64RunWadBrowser(void)
         return;
     }
 
-    selected_index = I_RunSelectionLoop();
+    selected_base_iwad_index = -1;
+    selected_index = I_RunSelectionLoop(&selected_base_iwad_index);
     if (selected_index >= 0 && selected_index < n64_wad_count)
     {
         I_CopyTruncated(n64_selected_wad,
                         sizeof(n64_selected_wad),
                         n64_wad_entries[selected_index].path);
+
+        if (n64_wad_entries[selected_index].compat == N64_WAD_COMPAT_NOT_IWAD)
+        {
+            if (selected_base_iwad_index < 0 || selected_base_iwad_index >= n64_wad_count)
+                selected_base_iwad_index = I_FindFirstCompatibleEntry();
+
+            if (selected_base_iwad_index >= 0)
+            {
+                I_CopyTruncated(n64_selected_base_iwad,
+                                sizeof(n64_selected_base_iwad),
+                                n64_wad_entries[selected_base_iwad_index].path);
+            }
+            else
+            {
+                I_CopyTruncated(n64_selected_base_iwad,
+                                sizeof(n64_selected_base_iwad),
+                                "rom:/doom.wad");
+            }
+        }
+        else
+        {
+            I_CopyTruncated(n64_selected_base_iwad,
+                            sizeof(n64_selected_base_iwad),
+                            n64_selected_wad);
+        }
     }
 
-    N64_DEBUGF("WAD browser: final selected path=%s\n", n64_selected_wad);
+    N64_DEBUGF("WAD browser: final selected path=%s base_iwad=%s\n",
+               n64_selected_wad,
+               n64_selected_base_iwad);
 
     I_N64LogMemoryStats("wad_browser:before_exit");
     rspq_wait();
@@ -1047,4 +1357,9 @@ void I_N64RunWadBrowser(void)
 const char* I_N64GetSelectedWadPath(void)
 {
     return n64_selected_wad;
+}
+
+const char* I_N64GetSelectedBaseIwadPath(void)
+{
+    return n64_selected_base_iwad;
 }

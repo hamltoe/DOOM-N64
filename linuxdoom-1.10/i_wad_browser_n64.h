@@ -5,5 +5,6 @@
 
 void I_N64RunWadBrowser(void);
 const char* I_N64GetSelectedWadPath(void);
+const char* I_N64GetSelectedBaseIwadPath(void);
 
 #endif

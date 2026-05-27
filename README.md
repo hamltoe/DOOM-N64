@@ -1,6 +1,5 @@
 # DOOM-N64
-
-DOOM-N64 is a Windows-friendly porting project for running classic DOOM on the Nintendo 64 using libdragon.
+DOOM-N64 is a Windows-friendly porting project for running classic DOOM on the Nintendo 64. Play your favorite mods using the WAD browser to load IWAD and PWAD files at runtime.
 
 This repository contains:
 - Original DOOM source base under linuxdoom-1.10
@@ -15,10 +14,12 @@ Current build produces:
 - build/doom.elf
 - build/doom.dfs
 
-IWAD handling:
+WAD handling (IWAD + PWAD):
 - Place your legally owned .WAD files in WADs/
 - Build syncs all .wad/.WAD files from WADs/ into filesystem/
-- Keep at least one IWAD (for example DOOM.WAD)
+- Keep at least one IWAD (for example DOOM.WAD, DOOM2.WAD, or DOOM1.WAD)
+- PWAD files are supported; selecting a PWAD prompts for a base IWAD
+- Runtime load order for mods is: base IWAD first, selected PWAD second
 
 ## Windows Build (WSL)
 
@@ -50,10 +51,11 @@ git submodule update --init --recursive
 
 ### 3) Put WAD files in place
 
-Copy your legally owned WAD files to the WADs folder:
+Copy your legally owned WAD files to the WADs folder. For PWAD mods, include both the mod PWAD and at least one compatible base IWAD:
 
 ```text
-WADs/DOOM1.WAD
+WADs/DOOM2.WAD
+WADs/MYMOD.WAD
 ```
 
 ### 4) Set environment variables in WSL
@@ -114,10 +116,38 @@ Fix:
 ### Missing IWAD: place your legally-owned WAD files in WADs/ ...
 
 Cause:
-- No IWAD available in WADs/ and filesystem/doom.wad missing
+- No compatible IWAD available in WADs/
 
 Fix:
 - Add at least one legally owned IWAD to WADs/ and rebuild
+- Keep PWADs alongside an IWAD (PWAD-only set is not bootable)
+
+### PWAD selected but game returns to browser
+
+Cause:
+- Selected WAD is PWAD and no compatible IWAD is available
+- Base IWAD picker was canceled
+
+Fix:
+- Ensure at least one valid IWAD exists in WADs/
+- Select the PWAD, then choose a base IWAD when prompted
+
+## WAD Browser Controls
+
+At startup, browser classifies each WAD:
+- IWAD: can be launched directly
+- PWAD: requires selecting a base IWAD
+- BAD/ERR: invalid or unreadable WAD and cannot be launched
+
+Controls:
+- D-Pad Up/Down or Analog Up/Down: Move selection
+- D-Pad Left/Right or C-Up/C-Down: Page up/down
+- A or Start: Select highlighted entry
+- B: Quick-select default IWAD (DOOM.WAD if available, otherwise first compatible IWAD)
+
+When a PWAD is selected:
+- A or Start: Confirm base IWAD in base picker
+- B: Cancel base IWAD picker and return to WAD list
 
 ## Repository Notes
 

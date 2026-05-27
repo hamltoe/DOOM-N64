@@ -64,6 +64,7 @@ static int n64_wad_count;
 static int n64_wad_compatible_count;
 static char n64_selected_wad[N64_WAD_PATH_LEN] = "rom:/doom.wad";
 static char n64_selected_base_iwad[N64_WAD_PATH_LEN] = "rom:/doom.wad";
+static char n64_browser_status_message[N64_WAD_TEXT_CACHE_TEXT_MAX];
 static rdpq_font_t* n64_wad_font;
 
 typedef struct n64_wad_text_cache_entry_s
@@ -176,6 +177,63 @@ static void I_CopyTruncated(char* dst, size_t dst_size, const char* src)
     dst[copy_len] = '\0';
 }
 
+static joypad_port_t I_FirstConnectedPort(void)
+{
+    JOYPAD_PORT_FOREACH(port)
+    {
+        if (joypad_is_connected(port))
+            return port;
+    }
+
+    return JOYPAD_PORT_1;
+}
+
+static int I_PortHasInputEvent(joypad_port_t port)
+{
+    joypad_buttons_t pressed;
+    joypad_inputs_t inputs;
+
+    if (!joypad_is_connected(port))
+        return 0;
+
+    pressed = joypad_get_buttons_pressed(port);
+    if (pressed.raw)
+        return 1;
+
+    inputs = joypad_get_inputs(port);
+    return (inputs.stick_x > 48 || inputs.stick_x < -48
+        || inputs.stick_y > 48 || inputs.stick_y < -48);
+}
+
+static joypad_port_t I_UpdateActivePort(joypad_port_t current_port)
+{
+    joypad_port_t first_connected = JOYPAD_PORT_1;
+    int have_connected = 0;
+
+    if (joypad_is_connected(current_port) && I_PortHasInputEvent(current_port))
+        return current_port;
+
+    JOYPAD_PORT_FOREACH(port)
+    {
+        if (!joypad_is_connected(port))
+            continue;
+
+        if (!have_connected)
+        {
+            first_connected = port;
+            have_connected = 1;
+        }
+
+        if (I_PortHasInputEvent(port))
+            return port;
+    }
+
+    if (have_connected)
+        return first_connected;
+
+    return JOYPAD_PORT_1;
+}
+
 static uint32_t I_ReadLE32(const uint8_t* p)
 {
     return (uint32_t)p[0]
@@ -212,6 +270,21 @@ static const char* I_CompatMessage(int compat)
         default:
             return "NOT COMPATIBLE";
     }
+}
+
+static void I_SetRejectNotice(char* text,
+                              size_t text_size,
+                              int* ticks,
+                              const char* message)
+{
+    if (!text || !text_size || !ticks)
+        return;
+
+    if (!message || !message[0])
+        message = "LAUNCH BLOCKED";
+
+    I_CopyTruncated(text, text_size, message);
+    *ticks = 90;
 }
 
 static int I_ClassifyWadCompatibility(const char* path, int64_t size_bytes)
@@ -747,7 +820,10 @@ static void I_DrawEntryRow(int row, int entry_index, int selected)
     }
 }
 
-static void I_DrawBrowserFrame(int cursor, int page, int reject_notice_ticks)
+static void I_DrawBrowserFrame(int cursor,
+                               int page,
+                               int reject_notice_ticks,
+                               const char* reject_notice_text)
 {
     char footer[64];
     int i;
@@ -764,7 +840,9 @@ static void I_DrawBrowserFrame(int cursor, int page, int reject_notice_ticks)
                        55,
                        304,
                        N64_STYLE_ERROR,
-                       "SELECTED FILE IS NOT A COMPATIBLE IWAD");
+                       (reject_notice_text && reject_notice_text[0])
+                           ? reject_notice_text
+                           : "SELECTED FILE IS NOT A COMPATIBLE IWAD");
     }
 
     for (i = 0; i < N64_WAD_VISIBLE_ROWS; i++)
@@ -959,6 +1037,9 @@ static int I_RunIwadPickerLoop(int pwad_index)
     bool stick_up_latch;
     bool stick_down_latch;
     bool input_armed;
+    int input_arm_timeout;
+    joypad_port_t active_port;
+    joypad_port_t next_port;
 
     iwad_count = I_BuildIwadIndexList(iwad_indices, N64_WAD_MAX_ENTRIES);
     if (iwad_count <= 0)
@@ -987,19 +1068,44 @@ static int I_RunIwadPickerLoop(int pwad_index)
     stick_up_latch = false;
     stick_down_latch = false;
     input_armed = false;
+    input_arm_timeout = 30;
+    active_port = I_FirstConnectedPort();
 
     I_ClampCursorAndPageForCount(&cursor, &page, iwad_count);
 
     for (;;)
     {
         joypad_poll();
-        pressed = joypad_get_buttons_pressed(JOYPAD_PORT_1);
-        held = joypad_get_buttons_held(JOYPAD_PORT_1);
-        inputs = joypad_get_inputs(JOYPAD_PORT_1);
+        next_port = I_UpdateActivePort(active_port);
+        if (next_port != active_port)
+        {
+            active_port = next_port;
+            N64_DEBUGF("WAD browser: IWAD picker active port=%d\n",
+                       (int)active_port + 1);
+        }
+
+        pressed = joypad_get_buttons_pressed(active_port);
+        held = joypad_get_buttons_held(active_port);
+        inputs = joypad_get_inputs(active_port);
         move = 0;
 
-        if (!held.raw)
-            input_armed = true;
+        if (!input_armed)
+        {
+            if (!held.raw)
+            {
+                input_armed = true;
+            }
+            else if (input_arm_timeout > 0)
+            {
+                input_arm_timeout--;
+                if (!input_arm_timeout)
+                {
+                    input_armed = true;
+                    N64_DEBUGF("WAD browser: IWAD picker input arm timeout fallback (held=0x%08x)\n",
+                               (unsigned int)held.raw);
+                }
+            }
+        }
 
         if (pressed.d_up)
             move = -1;
@@ -1076,6 +1182,10 @@ static int I_RunSelectionLoop(int* out_base_iwad_index)
     bool stick_down_latch;
     bool input_armed;
     int reject_notice_ticks;
+    char reject_notice_text[N64_WAD_TEXT_CACHE_TEXT_MAX];
+    int input_arm_timeout;
+    joypad_port_t active_port;
+    joypad_port_t next_port;
 
     if (!n64_wad_count)
         return -1;
@@ -1089,19 +1199,65 @@ static int I_RunSelectionLoop(int* out_base_iwad_index)
     done = false;
     used_default = false;
     input_armed = false;
+    input_arm_timeout = 30;
     reject_notice_ticks = 0;
+    reject_notice_text[0] = '\0';
     selected_base_iwad = -1;
+    active_port = I_FirstConnectedPort();
+
+    if (n64_browser_status_message[0])
+    {
+        I_SetRejectNotice(reject_notice_text,
+                          sizeof(reject_notice_text),
+                          &reject_notice_ticks,
+                          n64_browser_status_message);
+        n64_browser_status_message[0] = '\0';
+    }
 
     while (!done)
     {
         joypad_poll();
-        pressed = joypad_get_buttons_pressed(JOYPAD_PORT_1);
-        held = joypad_get_buttons_held(JOYPAD_PORT_1);
-        inputs = joypad_get_inputs(JOYPAD_PORT_1);
+        next_port = I_UpdateActivePort(active_port);
+        if (next_port != active_port)
+        {
+            active_port = next_port;
+            N64_DEBUGF("WAD browser: selection active port=%d\n",
+                       (int)active_port + 1);
+        }
+
+        pressed = joypad_get_buttons_pressed(active_port);
+        held = joypad_get_buttons_held(active_port);
+        inputs = joypad_get_inputs(active_port);
         move = 0;
 
-        if (!held.raw)
-            input_armed = true;
+        if (!input_armed)
+        {
+            if (!held.raw)
+            {
+                input_armed = true;
+            }
+            else if (input_arm_timeout > 0)
+            {
+                input_arm_timeout--;
+                if (!input_arm_timeout)
+                {
+                    input_armed = true;
+                    N64_DEBUGF("WAD browser: selection input arm timeout fallback (held=0x%08x)\n",
+                               (unsigned int)held.raw);
+                }
+            }
+        }
+
+        if (!input_armed && (pressed.a || pressed.start || pressed.b))
+        {
+            I_SetRejectNotice(reject_notice_text,
+                              sizeof(reject_notice_text),
+                              &reject_notice_ticks,
+                              "INPUT LOCK: RELEASE HELD BUTTONS");
+            N64_DEBUGF("WAD browser: selection input ignored while unarmed (pressed=0x%08x held=0x%08x)\n",
+                       (unsigned int)pressed.raw,
+                       (unsigned int)held.raw);
+        }
 
         if (pressed.d_up)
             move = -1;
@@ -1153,22 +1309,41 @@ static int I_RunSelectionLoop(int* out_base_iwad_index)
             }
             else if (n64_wad_entries[cursor].compat == N64_WAD_COMPAT_NOT_IWAD)
             {
-                selected_base_iwad = I_RunIwadPickerLoop(cursor);
-                if (selected_base_iwad >= 0)
+                if (I_FindFirstCompatibleEntry() < 0)
                 {
-                    done = true;
+                    I_SetRejectNotice(reject_notice_text,
+                                      sizeof(reject_notice_text),
+                                      &reject_notice_ticks,
+                                      "PWAD BLOCKED: NO COMPATIBLE BASE IWAD FOUND");
+                    N64_DEBUGF("WAD browser: PWAD selection blocked (no compatible base IWAD) index=%d path=%s\n",
+                               cursor,
+                               n64_wad_entries[cursor].path);
                 }
                 else
                 {
-                    reject_notice_ticks = 60;
-                    N64_DEBUGF("WAD browser: PWAD base IWAD selection canceled index=%d path=%s\n",
-                               cursor,
-                               n64_wad_entries[cursor].path);
+                    selected_base_iwad = I_RunIwadPickerLoop(cursor);
+                    if (selected_base_iwad >= 0)
+                    {
+                        done = true;
+                    }
+                    else
+                    {
+                        I_SetRejectNotice(reject_notice_text,
+                                          sizeof(reject_notice_text),
+                                          &reject_notice_ticks,
+                                          "PWAD CANCELED: BASE IWAD NOT SELECTED");
+                        N64_DEBUGF("WAD browser: PWAD base IWAD selection canceled index=%d path=%s\n",
+                                   cursor,
+                                   n64_wad_entries[cursor].path);
+                    }
                 }
             }
             else
             {
-                reject_notice_ticks = 60;
+                I_SetRejectNotice(reject_notice_text,
+                                  sizeof(reject_notice_text),
+                                  &reject_notice_ticks,
+                                  I_CompatMessage(n64_wad_entries[cursor].compat));
                 N64_DEBUGF("WAD browser: rejected incompatible selection index=%d path=%s (%s)\n",
                            cursor,
                            n64_wad_entries[cursor].path,
@@ -1191,14 +1366,17 @@ static int I_RunSelectionLoop(int* out_base_iwad_index)
             }
             else
             {
-                reject_notice_ticks = 60;
+                I_SetRejectNotice(reject_notice_text,
+                                  sizeof(reject_notice_text),
+                                  &reject_notice_ticks,
+                                  "QUICK IWAD FAILED: NO COMPATIBLE IWAD FOUND");
                 N64_DEBUGF("WAD browser: no compatible IWAD available for default selection\n");
             }
         }
 
         disp = display_get();
         rdpq_attach_clear(disp, NULL);
-        I_DrawBrowserFrame(cursor, page, reject_notice_ticks);
+        I_DrawBrowserFrame(cursor, page, reject_notice_ticks, reject_notice_text);
         rdpq_detach_show();
 
         if (reject_notice_ticks > 0)
@@ -1242,17 +1420,41 @@ static void I_RunFallbackLoop(void)
     joypad_buttons_t held;
     surface_t* disp;
     bool input_armed;
+    int input_arm_timeout;
+    joypad_port_t active_port;
+    joypad_port_t next_port;
 
     input_armed = false;
+    input_arm_timeout = 30;
+    active_port = I_FirstConnectedPort();
 
     for (;;)
     {
         joypad_poll();
-        pressed = joypad_get_buttons_pressed(JOYPAD_PORT_1);
-        held = joypad_get_buttons_held(JOYPAD_PORT_1);
+        next_port = I_UpdateActivePort(active_port);
+        if (next_port != active_port)
+        {
+            active_port = next_port;
+            N64_DEBUGF("WAD browser: fallback active port=%d\n",
+                       (int)active_port + 1);
+        }
 
-        if (!held.raw)
-            input_armed = true;
+        pressed = joypad_get_buttons_pressed(active_port);
+        held = joypad_get_buttons_held(active_port);
+
+        if (!input_armed)
+        {
+            if (!held.raw)
+            {
+                input_armed = true;
+            }
+            else if (input_arm_timeout > 0)
+            {
+                input_arm_timeout--;
+                if (!input_arm_timeout)
+                    input_armed = true;
+            }
+        }
 
         disp = display_get();
         rdpq_attach_clear(disp, NULL);
@@ -1362,4 +1564,17 @@ const char* I_N64GetSelectedWadPath(void)
 const char* I_N64GetSelectedBaseIwadPath(void)
 {
     return n64_selected_base_iwad;
+}
+
+void I_N64SetBrowserStatusMessage(const char* message)
+{
+    I_CopyTruncated(n64_browser_status_message,
+                    sizeof(n64_browser_status_message),
+                    message ? message : "");
+
+    if (n64_browser_status_message[0])
+    {
+        N64_DEBUGF("WAD browser: status message set: %s\n",
+                   n64_browser_status_message);
+    }
 }

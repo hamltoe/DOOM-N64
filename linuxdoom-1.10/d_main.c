@@ -722,6 +722,13 @@ void IdentifyVersion (void)
 
 	if (!D_N64ValidateIwad(base_iwad))
 	{
+	    char reject_message[96];
+
+	    snprintf(reject_message,
+	             sizeof(reject_message),
+	             "LAUNCH BLOCKED: %s FAILED IWAD CHECK",
+	             D_N64BaseName(base_iwad));
+	    I_N64SetBrowserStatusMessage(reject_message);
 	    N64_DEBUGF("IdentifyVersion: incompatible base_iwad=%s, returning to browser\n",
 	              base_iwad);
 	    I_N64ReturnToBrowser();

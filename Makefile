@@ -127,29 +127,32 @@ MUSIC_ASSETS_YM_LOWER = $(wildcard assets/music/*.ym)
 MUSIC_ASSETS_YM_UPPER = $(wildcard assets/music/*.YM)
 
 MUSIC_ASSETS_CONV = \
-	$(addprefix filesystem/music/,$(notdir $(MUSIC_ASSETS_XM_LOWER:%.xm=%.xm64))) \
-	$(addprefix filesystem/music/,$(notdir $(MUSIC_ASSETS_XM_UPPER:%.XM=%.xm64))) \
-	$(addprefix filesystem/music/,$(notdir $(MUSIC_ASSETS_YM_LOWER:%.ym=%.ym64))) \
-	$(addprefix filesystem/music/,$(notdir $(MUSIC_ASSETS_YM_UPPER:%.YM=%.ym64)))
+	$(addprefix $(N64_MKDFS_ROOT)/music/,$(notdir $(MUSIC_ASSETS_XM_LOWER:%.xm=%.xm64))) \
+	$(addprefix $(N64_MKDFS_ROOT)/music/,$(notdir $(MUSIC_ASSETS_XM_UPPER:%.XM=%.xm64))) \
+	$(addprefix $(N64_MKDFS_ROOT)/music/,$(notdir $(MUSIC_ASSETS_YM_LOWER:%.ym=%.ym64))) \
+	$(addprefix $(N64_MKDFS_ROOT)/music/,$(notdir $(MUSIC_ASSETS_YM_UPPER:%.YM=%.ym64)))
 
 WAD_ASSETS_LOWER = $(wildcard WADs/*.wad)
 WAD_ASSETS_UPPER = $(wildcard WADs/*.WAD)
 
 WAD_ASSETS_COPY = \
-	$(addprefix filesystem/,$(notdir $(WAD_ASSETS_LOWER))) \
-	$(addprefix filesystem/,$(notdir $(WAD_ASSETS_UPPER)))
+	$(addprefix $(N64_MKDFS_ROOT)/,$(notdir $(WAD_ASSETS_LOWER))) \
+	$(addprefix $(N64_MKDFS_ROOT)/,$(notdir $(WAD_ASSETS_UPPER)))
 
-all: doom.z64
+ROM_NAME = Doom-N64
+
+all: $(ROM_NAME).z64
 .PHONY: all clean prepare-filesystem check-wads
 
-$(BUILD_DIR)/doom.elf: $(OBJS)
+$(BUILD_DIR)/$(ROM_NAME).elf: $(OBJS)
 
-doom.z64: $(BUILD_DIR)/doom.dfs
+$(ROM_NAME).z64: $(BUILD_DIR)/doom.dfs
 
 prepare-filesystem:
 	@echo "    [FS] Resetting filesystem"
-	@rm -rf filesystem
-	@mkdir -p filesystem/music
+	@mkdir -p $(N64_MKDFS_ROOT)
+	@find $(N64_MKDFS_ROOT) -mindepth 1 -delete
+	@mkdir -p $(N64_MKDFS_ROOT)/music
 
 check-wads: prepare-filesystem
 	@if [ -z "$(strip $(WAD_ASSETS_LOWER) $(WAD_ASSETS_UPPER))" ]; then \
@@ -157,35 +160,35 @@ check-wads: prepare-filesystem
 		exit 1; \
 	fi
 
-filesystem/%.wad: WADs/%.wad prepare-filesystem
+$(N64_MKDFS_ROOT)/%.wad: WADs/%.wad prepare-filesystem
 	@mkdir -p $(dir $@)
 	@echo "    [WAD] $< -> $@"
 	@cp "$<" "$@"
 
-filesystem/%.WAD: WADs/%.WAD prepare-filesystem
+$(N64_MKDFS_ROOT)/%.WAD: WADs/%.WAD prepare-filesystem
 	@mkdir -p $(dir $@)
 	@echo "    [WAD] $< -> $@"
 	@cp "$<" "$@"
 
-filesystem/music/%.xm64: assets/music/%.xm prepare-filesystem
+$(N64_MKDFS_ROOT)/music/%.xm64: assets/music/%.xm prepare-filesystem
 	@mkdir -p $(dir $@)
 	@echo "    [AUDIO] $@"
-	@$(N64_AUDIOCONV) -o filesystem/music "$<"
+	@$(N64_AUDIOCONV) -o $(N64_MKDFS_ROOT)/music "$<"
 
-filesystem/music/%.xm64: assets/music/%.XM prepare-filesystem
+$(N64_MKDFS_ROOT)/music/%.xm64: assets/music/%.XM prepare-filesystem
 	@mkdir -p $(dir $@)
 	@echo "    [AUDIO] $@"
-	@$(N64_AUDIOCONV) -o filesystem/music "$<"
+	@$(N64_AUDIOCONV) -o $(N64_MKDFS_ROOT)/music "$<"
 
-filesystem/music/%.ym64: assets/music/%.ym prepare-filesystem
+$(N64_MKDFS_ROOT)/music/%.ym64: assets/music/%.ym prepare-filesystem
 	@mkdir -p $(dir $@)
 	@echo "    [AUDIO] $@"
-	@$(N64_AUDIOCONV) -o filesystem/music "$<"
+	@$(N64_AUDIOCONV) -o $(N64_MKDFS_ROOT)/music "$<"
 
-filesystem/music/%.ym64: assets/music/%.YM prepare-filesystem
+$(N64_MKDFS_ROOT)/music/%.ym64: assets/music/%.YM prepare-filesystem
 	@mkdir -p $(dir $@)
 	@echo "    [AUDIO] $@"
-	@$(N64_AUDIOCONV) -o filesystem/music "$<"
+	@$(N64_AUDIOCONV) -o $(N64_MKDFS_ROOT)/music "$<"
 
 $(BUILD_DIR)/doom.dfs: check-wads
 $(BUILD_DIR)/doom.dfs: $(MUSIC_ASSETS_CONV) $(WAD_ASSETS_COPY)

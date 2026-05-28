@@ -8,11 +8,13 @@
 #include "d_net.h"
 #include "i_system.h"
 #include "m_argv.h"
+#include "i_wad_browser_n64.h"
 
 #include "i_net.h"
 
 void I_InitNetwork(void)
 {
+    int local_players;
     int p;
 
     doomcom = (doomcom_t*)malloc(sizeof(*doomcom));
@@ -36,7 +38,19 @@ void I_InitNetwork(void)
     }
 
     doomcom->extratics = M_CheckParm("-extratic") ? 1 : 0;
+
+    local_players = I_N64GetSelectedPlayerCount();
+    if (local_players < 1)
+        local_players = 1;
+    if (local_players > MAXPLAYERS)
+        local_players = MAXPLAYERS;
+
+    D_SetLocalPlayerCount(local_players);
+
     doomcom->id = DOOMCOM_ID;
+    // Boot as a single player so the title/menus render full-screen normally.
+    // G_DoNewGame expands playeringame[] and doomcom->numplayers via
+    // D_LocalMultiplayerEnabled() when the user picks a map.
     doomcom->numplayers = 1;
     doomcom->numnodes = 1;
     doomcom->deathmatch = false;

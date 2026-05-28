@@ -15,10 +15,18 @@
 
 static boolean video_initialized;
 static surface_t doom_screen8;
+static byte* n64_split_screen;
 static byte* n64_aux_screens[3];
 static boolean n64_aux_screen_owned[3];
 static uint16_t doom_tlut[256] __attribute__((aligned(8)));
 static uint64_t last_menu_present_ms;
+static boolean n64_split_active;
+static int n64_split_player_count;
+static n64_local_input_t n64_local_inputs[MAXPLAYERS];
+static boolean n64_local_weapon_cycle_down[MAXPLAYERS];
+static boolean n64_local_weapon_prev_down[MAXPLAYERS];
+static boolean n64_local_weapon_next_down[MAXPLAYERS];
+static int n64_local_next_weapon_cycle_key[MAXPLAYERS];
 
 #define STICK_ANALOG_MAX 80
 #define STICK_ANALOG_DEADZONE 6
@@ -83,17 +91,22 @@ static boolean I_IsWeaponKeySelectable(player_t* player, int key)
     return true;
 }
 
-static int I_GetNextSelectableWeaponKey(void)
+static int I_GetNextSelectableWeaponKeyForPlayer(int playernum, int* next_cycle_key)
 {
     int i;
     int key;
     player_t* player;
 
-    if (consoleplayer < 0 || consoleplayer >= MAXPLAYERS || !playeringame[consoleplayer])
+    if (!next_cycle_key)
         return 0;
 
-    player = &players[consoleplayer];
-    key = next_weapon_cycle_key;
+    if (playernum < 0 || playernum >= MAXPLAYERS || !playeringame[playernum])
+        return 0;
+
+    player = &players[playernum];
+    key = *next_cycle_key;
+    if (key < '1' || key > '7')
+        key = '1';
 
     for (i = 0; i < 7; i++)
     {
@@ -133,17 +146,17 @@ static int I_WeaponToKey(weapontype_t weapon)
     }
 }
 
-static int I_GetDirectionalWeaponKey(boolean next)
+static int I_GetDirectionalWeaponKeyForPlayer(int playernum, boolean next)
 {
     int key;
     int current_key;
     player_t* player;
     weapontype_t current_weapon;
 
-    if (consoleplayer < 0 || consoleplayer >= MAXPLAYERS || !playeringame[consoleplayer])
+    if (playernum < 0 || playernum >= MAXPLAYERS || !playeringame[playernum])
         return 0;
 
-    player = &players[consoleplayer];
+    player = &players[playernum];
     current_weapon = player->readyweapon;
     if (player->pendingweapon != wp_nochange)
         current_weapon = player->pendingweapon;
@@ -242,7 +255,7 @@ static void I_UpdateWeaponCycle(boolean down)
 
     if (down && !weapon_cycle_down)
     {
-        next_key = I_GetNextSelectableWeaponKey();
+        next_key = I_GetNextSelectableWeaponKeyForPlayer(consoleplayer, &next_weapon_cycle_key);
         weapon_cycle_key = next_key;
 
         if (next_key)
@@ -268,7 +281,7 @@ static void I_UpdateWeaponSelect(boolean down, boolean next, boolean* select_dow
 
     if (down && !*select_down)
     {
-        key = I_GetDirectionalWeaponKey(next);
+        key = I_GetDirectionalWeaponKeyForPlayer(consoleplayer, next);
         *select_key = key;
         if (key)
             I_PostKeyEvent(ev_keydown, key);
@@ -279,6 +292,281 @@ static void I_UpdateWeaponSelect(boolean down, boolean next, boolean* select_dow
     }
 
     *select_down = down;
+}
+
+typedef struct n64_split_rect_s
+{
+    int x;
+    int y;
+    int w;
+    int h;
+} n64_split_rect_t;
+
+static void I_GetSplitRect(int view_index, n64_split_rect_t* rect)
+{
+    if (!rect)
+        return;
+
+    rect->x = 0;
+    rect->y = 0;
+    rect->w = 0;
+    rect->h = 0;
+
+    if (view_index < 0)
+        return;
+
+    if (n64_split_player_count <= 2)
+    {
+        if (view_index == 0)
+        {
+            rect->x = 0;
+            rect->y = 0;
+            rect->w = SCREENWIDTH;
+            rect->h = SCREENHEIGHT / 2;
+        }
+        else if (view_index == 1)
+        {
+            rect->x = 0;
+            rect->y = SCREENHEIGHT / 2;
+            rect->w = SCREENWIDTH;
+            rect->h = SCREENHEIGHT / 2;
+        }
+        return;
+    }
+
+    if (n64_split_player_count == 3)
+    {
+        switch (view_index)
+        {
+            case 0:
+                rect->x = 0;
+                rect->y = 0;
+                rect->w = SCREENWIDTH / 2;
+                rect->h = SCREENHEIGHT / 2;
+                break;
+            case 1:
+                rect->x = SCREENWIDTH / 2;
+                rect->y = 0;
+                rect->w = SCREENWIDTH / 2;
+                rect->h = SCREENHEIGHT / 2;
+                break;
+            case 2:
+                rect->x = 0;
+                rect->y = SCREENHEIGHT / 2;
+                rect->w = SCREENWIDTH;
+                rect->h = SCREENHEIGHT / 2;
+                break;
+            default:
+                break;
+        }
+        return;
+    }
+
+    switch (view_index)
+    {
+        case 0:
+            rect->x = 0;
+            rect->y = 0;
+            rect->w = SCREENWIDTH / 2;
+            rect->h = SCREENHEIGHT / 2;
+            break;
+        case 1:
+            rect->x = SCREENWIDTH / 2;
+            rect->y = 0;
+            rect->w = SCREENWIDTH / 2;
+            rect->h = SCREENHEIGHT / 2;
+            break;
+        case 2:
+            rect->x = 0;
+            rect->y = SCREENHEIGHT / 2;
+            rect->w = SCREENWIDTH / 2;
+            rect->h = SCREENHEIGHT / 2;
+            break;
+        case 3:
+            rect->x = SCREENWIDTH / 2;
+            rect->y = SCREENHEIGHT / 2;
+            rect->w = SCREENWIDTH / 2;
+            rect->h = SCREENHEIGHT / 2;
+            break;
+        default:
+            break;
+    }
+}
+
+static void I_SplitBlitScaled(const n64_split_rect_t* rect)
+{
+    int x;
+    int y;
+    int src_x;
+    int src_y;
+    byte* src;
+    byte* dst;
+
+    if (!rect || rect->w <= 0 || rect->h <= 0)
+        return;
+
+    src = screens[0];
+    dst = n64_split_screen;
+    if (!src || !dst)
+        return;
+
+    for (y = 0; y < rect->h; y++)
+    {
+        src_y = (y * SCREENHEIGHT) / rect->h;
+        for (x = 0; x < rect->w; x++)
+        {
+            src_x = (x * SCREENWIDTH) / rect->w;
+            dst[(rect->y + y) * SCREENWIDTH + (rect->x + x)] =
+                src[src_y * SCREENWIDTH + src_x];
+        }
+    }
+}
+
+static void I_UpdateLocalWeaponInput(int playernum,
+                                     joypad_buttons_t buttons,
+                                     n64_local_input_t* state)
+{
+    int key;
+
+    key = 0;
+
+    if (buttons.d_down && !n64_local_weapon_cycle_down[playernum])
+    {
+        key = I_GetNextSelectableWeaponKeyForPlayer(playernum, &n64_local_next_weapon_cycle_key[playernum]);
+        if (key)
+        {
+            n64_local_next_weapon_cycle_key[playernum] = key + 1;
+            if (n64_local_next_weapon_cycle_key[playernum] > '7')
+                n64_local_next_weapon_cycle_key[playernum] = '1';
+        }
+    }
+    else if (buttons.d_left && !n64_local_weapon_prev_down[playernum])
+    {
+        key = I_GetDirectionalWeaponKeyForPlayer(playernum, false);
+    }
+    else if (buttons.d_right && !n64_local_weapon_next_down[playernum])
+    {
+        key = I_GetDirectionalWeaponKeyForPlayer(playernum, true);
+    }
+
+    state->weapon_key = key;
+
+    n64_local_weapon_cycle_down[playernum] = buttons.d_down;
+    n64_local_weapon_prev_down[playernum] = buttons.d_left;
+    n64_local_weapon_next_down[playernum] = buttons.d_right;
+}
+
+static void I_UpdateLocalPlayerInput(int playernum, joypad_port_t port)
+{
+    joypad_inputs_t inputs;
+    joypad_buttons_t buttons;
+    n64_local_input_t* state;
+
+    state = &n64_local_inputs[playernum];
+    memset(state, 0, sizeof(*state));
+
+    if (!joypad_is_connected(port))
+    {
+        n64_local_weapon_cycle_down[playernum] = false;
+        n64_local_weapon_prev_down[playernum] = false;
+        n64_local_weapon_next_down[playernum] = false;
+        return;
+    }
+
+    inputs = joypad_get_inputs(port);
+    buttons = inputs.btn;
+
+    state->joy_x = I_NormalizeStickAxis(inputs.stick_x);
+    state->joy_y = -I_NormalizeStickAxis(inputs.stick_y);
+
+    if (playernum == 0 && menuactive)
+    {
+        state->joy_x = 0;
+        state->joy_y = 0;
+    }
+
+    state->strafe_left = buttons.c_left;
+    state->strafe_right = buttons.c_right;
+    state->speed = buttons.c_up;
+
+    if (playernum == 0 && menuactive)
+    {
+        state->fire = false;
+        state->use = false;
+    }
+    else
+    {
+        state->fire = (buttons.a || buttons.z || buttons.r);
+        state->use = (buttons.b || buttons.c_down);
+    }
+
+    I_UpdateLocalWeaponInput(playernum, buttons, state);
+}
+
+void I_N64GetLocalInputState(int player_index, n64_local_input_t* out_state)
+{
+    if (!out_state)
+        return;
+
+    if (player_index < 0 || player_index >= MAXPLAYERS)
+    {
+        memset(out_state, 0, sizeof(*out_state));
+        return;
+    }
+
+    *out_state = n64_local_inputs[player_index];
+}
+
+void I_N64SplitScreenBeginFrame(int player_count)
+{
+    if (player_count < 1)
+        player_count = 1;
+    else if (player_count > MAXPLAYERS)
+        player_count = MAXPLAYERS;
+
+    n64_split_player_count = player_count;
+    n64_split_active = (n64_split_screen != NULL) && (player_count > 1);
+
+    if (n64_split_active)
+        memset(n64_split_screen, 0, SCREENWIDTH * SCREENHEIGHT);
+}
+
+void I_N64SplitScreenCaptureView(int view_index)
+{
+    n64_split_rect_t rect;
+
+    if (!n64_split_active)
+        return;
+
+    I_GetSplitRect(view_index, &rect);
+    I_SplitBlitScaled(&rect);
+}
+
+void I_N64SplitScreenEndFrame(void)
+{
+    int x;
+    int y;
+    int vertical_divider_height;
+
+    if (!n64_split_active || !n64_split_screen || !screens[0])
+        return;
+
+    if (n64_split_player_count <= 2)
+    {
+        memset(n64_split_screen + (SCREENHEIGHT / 2 - 1) * SCREENWIDTH, 0, SCREENWIDTH);
+    }
+    else
+    {
+        memset(n64_split_screen + (SCREENHEIGHT / 2 - 1) * SCREENWIDTH, 0, SCREENWIDTH);
+        vertical_divider_height = (n64_split_player_count == 3) ? (SCREENHEIGHT / 2) : SCREENHEIGHT;
+        for (y = 0; y < vertical_divider_height; y++)
+        {
+            for (x = SCREENWIDTH / 2 - 1; x <= SCREENWIDTH / 2; x++)
+                n64_split_screen[y * SCREENWIDTH + x] = 0;
+        }
+    }
+
+    memcpy(screens[0], n64_split_screen, SCREENWIDTH * SCREENHEIGHT);
 }
 
 void I_ShutdownGraphics(void)
@@ -302,6 +590,16 @@ void I_ShutdownGraphics(void)
         screens[i + 1] = NULL;
     }
 
+    if (n64_split_screen)
+    {
+        free(n64_split_screen);
+        n64_split_screen = NULL;
+    }
+
+    n64_split_active = false;
+    n64_split_player_count = 1;
+    memset(n64_local_inputs, 0, sizeof(n64_local_inputs));
+
     surface_free(&doom_screen8);
     screens[0] = NULL;
     rdpq_close();
@@ -319,6 +617,8 @@ void I_StartTic(void)
     joypad_inputs_t inputs;
     joypad_buttons_t buttons;
     joypad_buttons_t pressed;
+    joypad_port_t port;
+    int playernum;
     int stick_x;
     int stick_y;
     int joy_x;
@@ -363,6 +663,12 @@ void I_StartTic(void)
     I_UpdateKeyState(buttons.c_left, KEYIDX_STRAFE_LEFT, ',');
     I_UpdateKeyState(buttons.c_right, KEYIDX_STRAFE_RIGHT, '.');
     I_UpdateKeyState(buttons.c_up, KEYIDX_SPEED, KEY_RSHIFT);
+
+    for (playernum = 0; playernum < MAXPLAYERS; playernum++)
+    {
+        port = (joypad_port_t)(JOYPAD_PORT_1 + playernum);
+        I_UpdateLocalPlayerInput(playernum, port);
+    }
 }
 
 void I_UpdateNoBlit(void)
@@ -457,6 +763,11 @@ void I_InitGraphics(void)
     screens[0] = (byte*)doom_screen8.buffer;
     memset(screens[0], 0, SCREENWIDTH * SCREENHEIGHT);
 
+    n64_split_screen = (byte*)malloc((size_t)SCREENWIDTH * (size_t)SCREENHEIGHT);
+    if (!n64_split_screen)
+        I_Error("I_InitGraphics: failed to allocate split-screen buffer");
+    memset(n64_split_screen, 0, SCREENWIDTH * SCREENHEIGHT);
+
     aux_size = (size_t)SCREENWIDTH * (size_t)SCREENHEIGHT;
     for (i = 0; i < 3; i++)
     {
@@ -501,6 +812,15 @@ void I_InitGraphics(void)
     weapon_prev_key = 0;
     weapon_next_key = 0;
     next_weapon_cycle_key = '1';
+
+    n64_split_active = false;
+    n64_split_player_count = 1;
+    memset(n64_local_inputs, 0, sizeof(n64_local_inputs));
+    memset(n64_local_weapon_cycle_down, 0, sizeof(n64_local_weapon_cycle_down));
+    memset(n64_local_weapon_prev_down, 0, sizeof(n64_local_weapon_prev_down));
+    memset(n64_local_weapon_next_down, 0, sizeof(n64_local_weapon_next_down));
+    for (i = 0; i < MAXPLAYERS; i++)
+        n64_local_next_weapon_cycle_key[i] = '1';
 
     video_initialized = true;
     I_N64LogMemoryStats("i_video:after_init");

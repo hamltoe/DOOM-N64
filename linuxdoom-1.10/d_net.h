@@ -138,6 +138,11 @@ void D_QuitNetGame (void);
 //? how many ticks to run?
 void TryRunTics (void);
 
+// Local multiplayer configuration used by platform backends.
+void D_SetLocalPlayerCount(int player_count);
+int D_GetLocalPlayerCount(void);
+boolean D_LocalMultiplayerEnabled(void);
+
 
 #endif
 

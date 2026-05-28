@@ -28,21 +28,24 @@ Project decisions:
 - Present software frame through libdragon RDP path.
 - Defer Tiny3D usage until after baseline is stable.
 
-## 3. Data and IWAD Strategy
+## 3. Data, IWAD, and PWAD Strategy
 
 The engine code is GPL, but IWAD data is not redistributable with project source.
 
 Plan:
-- Target full `DOOM.WAD` first.
-- Build system expects user-provided WAD in `filesystem/doom.wad`.
-- Add guard rails in build scripts:
-  - Fail with clear message if WAD missing.
-  - Print expected file name and location.
-- Add `.gitignore` entry to avoid committing IWAD.
+- User provides legally owned WAD files under `WADs/`.
+- Build system stages all `.wad/.WAD` files from `WADs/` into `filesystem/` before `mkdfs`.
+- Require at least one valid IWAD in staged set (PWAD-only set is not bootable).
+- Keep guard rails in build scripts:
+  - Fail with clear message if no WAD files are present.
+  - Keep expected source location (`WADs/`) explicit.
+- Add `.gitignore` entry to avoid committing proprietary WAD data.
 
 Technical loading model:
-- Store IWAD in DragonFS image.
-- Access with `rom:/doom.wad` file path using newlib/libdragon file APIs.
+- Store staged WADs in DragonFS image and scan them via `rom:/` paths.
+- Browser classifies each WAD as `IWAD`, `PWAD`, `BAD`, or `ERR` from header and directory checks.
+- Selecting an IWAD loads it directly as base content.
+- Selecting a PWAD opens a base-IWAD picker; runtime loads base IWAD first, then PWAD.
 - Keep lump cache behavior close to original DOOM for compatibility.
 
 ## 4. Key Technical Hurdles
@@ -129,21 +132,21 @@ Exit criteria:
 - Full project links on N64 toolchain.
 - `D_DoomMain()` enters initialization path without Linux/X11 linkage.
 
-### Phase 2: IWAD Loading and Endian Validation
+### Phase 2: WAD Loading (IWAD + PWAD) and Endian Validation
 
 Goals:
-- Load `doom.wad` from DragonFS.
+- Load selected IWAD or selected PWAD + base IWAD from DragonFS.
 - Validate WAD header parsing and lump directory integrity.
 - Confirm endian conversion correctness across all critical reads.
 
 Tasks:
 - Replace POSIX file calls in WAD loader path.
-- Add diagnostics for lump count and selected known lump names.
+- Add diagnostics for selected WAD/base IWAD, lump count, and selected known lump names.
 - Verify no alignment faults while reading lump structures.
 
 Exit criteria:
-- `W_InitMultipleFiles` succeeds.
-- `numlumps` value matches known full WAD expectation.
+- `W_InitMultipleFiles` succeeds for direct IWAD and IWAD+PWAD launch paths.
+- `numlumps` value is sane and stable for selected content.
 - No fatal read/endian errors during startup.
 
 ### Phase 3: Video Output Path (Software Frame to N64 Display)
@@ -238,7 +241,7 @@ Notes:
 
 Critical issues to watch now:
 
-1. IWAD legal/distribution workflow
+1. WAD legal/distribution workflow (IWAD + PWAD)
 - Risk: accidental repo commit of proprietary WAD.
 - Mitigation: `.gitignore`, build-time existence checks, docs warning.
 
@@ -286,7 +289,8 @@ Phase 1 check:
 - No X11/Linux symbol references.
 
 Phase 2 check:
-- WAD opens from `rom:/doom.wad`.
+- Selected WAD opens from `rom:/` browser path.
+- PWAD launch loads base IWAD first, then selected PWAD.
 - Lump count sane and stable.
 - No endian assertion failures.
 

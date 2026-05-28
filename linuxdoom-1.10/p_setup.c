@@ -47,6 +47,7 @@ rcsid[] = "$Id: p_setup.c,v 1.5 1997/02/03 22:45:12 b1 Exp $";
 
 
 void	P_SpawnMapThing (mapthing_t*	mthing);
+void	P_SpawnPlayer (mapthing_t*	mthing);
 
 
 //
@@ -111,6 +112,37 @@ byte*		rejectmatrix;
 mapthing_t	deathmatchstarts[MAX_DEATHMATCH_STARTS];
 mapthing_t*	deathmatch_p;
 mapthing_t	playerstarts[MAXPLAYERS];
+
+static void P_NormalizePlayerStarts(void)
+{
+    int i;
+    int fallback;
+
+    fallback = -1;
+    for (i = 0; i < MAXPLAYERS; i++)
+    {
+        if (playerstarts[i].type >= 1 && playerstarts[i].type <= 4)
+        {
+            fallback = i;
+            break;
+        }
+    }
+
+    if (fallback < 0)
+        return;
+
+    for (i = 0; i < MAXPLAYERS; i++)
+    {
+        if (!playeringame[i])
+            continue;
+
+        if (playerstarts[i].type >= 1 && playerstarts[i].type <= 4)
+            continue;
+
+        playerstarts[i] = playerstarts[fallback];
+        playerstarts[i].type = i + 1;
+    }
+}
 
 
 
@@ -658,7 +690,19 @@ P_SetupLevel
 
     bodyqueslot = 0;
     deathmatch_p = deathmatchstarts;
+    memset(playerstarts, 0, sizeof(playerstarts));
     P_LoadThings (lumpnum+ML_THINGS);
+    P_NormalizePlayerStarts();
+
+    if (!deathmatch)
+    {
+	for (i=0 ; i<MAXPLAYERS ; i++)
+	    if (playeringame[i] && !players[i].mo
+		&& playerstarts[i].type >= 1 && playerstarts[i].type <= 4)
+	    {
+		P_SpawnPlayer (&playerstarts[i]);
+	    }
+    }
     
     // if deathmatch, randomly spawn the active players
     if (deathmatch)

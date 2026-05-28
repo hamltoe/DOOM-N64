@@ -32,6 +32,7 @@
 #define N64_WAD_FONT_ID 1
 #define N64_WAD_TEXT_CACHE_SIZE 96
 #define N64_WAD_TEXT_CACHE_TEXT_MAX 96
+#define N64_WAD_MAX_LOCAL_PLAYERS 4
 
 enum
 {
@@ -64,6 +65,7 @@ static int n64_wad_count;
 static int n64_wad_compatible_count;
 static char n64_selected_wad[N64_WAD_PATH_LEN] = "rom:/doom.wad";
 static char n64_selected_base_iwad[N64_WAD_PATH_LEN] = "rom:/doom.wad";
+static int n64_selected_player_count = 1;
 static char n64_browser_status_message[N64_WAD_TEXT_CACHE_TEXT_MAX];
 static rdpq_font_t* n64_wad_font;
 
@@ -186,6 +188,28 @@ static joypad_port_t I_FirstConnectedPort(void)
     }
 
     return JOYPAD_PORT_1;
+}
+
+static int I_GetConnectedControllerCount(void)
+{
+    int count;
+
+    count = 0;
+    JOYPAD_PORT_FOREACH(port)
+    {
+        if (joypad_is_connected(port))
+            count++;
+    }
+
+    return count;
+}
+
+static void I_ClampSelectedPlayerCount(void)
+{
+    if (n64_selected_player_count < 1)
+        n64_selected_player_count = 1;
+    else if (n64_selected_player_count > N64_WAD_MAX_LOCAL_PLAYERS)
+        n64_selected_player_count = N64_WAD_MAX_LOCAL_PLAYERS;
 }
 
 static int I_PortHasInputEvent(joypad_port_t port)
@@ -775,6 +799,7 @@ static void I_DrawStaticFrame(void)
     I_DrawTextSafe(176, 18, 142, N64_STYLE_HINT, "C-UP/DOWN: PAGE");
     I_DrawTextSafe(176, 27, 142, N64_STYLE_HINT, "A/START: SELECT");
     I_DrawTextSafe(176, 36, 142, N64_STYLE_HINT, "B: QUICK IWAD");
+    I_DrawTextSafe(176, 45, 142, N64_STYLE_HINT, "L/R: PLAYERS");
 }
 
 static void I_DrawEntryRow(int row, int entry_index, int selected)
@@ -826,11 +851,21 @@ static void I_DrawBrowserFrame(int cursor,
                                const char* reject_notice_text)
 {
     char footer[64];
+    char player_label[48];
     int i;
     int index;
+    int connected_count;
     n64_wad_entry_t* selected_entry;
 
     I_DrawStaticFrame();
+
+    connected_count = I_GetConnectedControllerCount();
+    snprintf(player_label,
+             sizeof(player_label),
+             "PLAYERS: %d/%d",
+             n64_selected_player_count,
+             connected_count ? connected_count : 1);
+    I_DrawTextSafe(18, 37, 152, N64_STYLE_HINT, player_label);
 
     selected_entry = &n64_wad_entries[cursor];
 
@@ -1300,6 +1335,28 @@ static int I_RunSelectionLoop(int* out_base_iwad_index)
             I_ClampCursorAndPage(&cursor, &page);
         }
 
+        if (input_armed && pressed.l)
+        {
+            if (n64_selected_player_count > 1)
+                n64_selected_player_count--;
+            else
+                I_SetRejectNotice(reject_notice_text,
+                                  sizeof(reject_notice_text),
+                                  &reject_notice_ticks,
+                                  "PLAYERS: MINIMUM IS 1");
+        }
+
+        if (input_armed && pressed.r)
+        {
+            if (n64_selected_player_count < N64_WAD_MAX_LOCAL_PLAYERS)
+                n64_selected_player_count++;
+            else
+                I_SetRejectNotice(reject_notice_text,
+                                  sizeof(reject_notice_text),
+                                  &reject_notice_ticks,
+                                  "PLAYERS: MAXIMUM IS 4");
+        }
+
         if (input_armed && (pressed.a || pressed.start))
         {
             if (n64_wad_entries[cursor].compat == N64_WAD_COMPAT_OK)
@@ -1476,6 +1533,7 @@ void I_N64RunWadBrowser(void)
     uint32_t existing_buffers;
 
     I_ScanWadEntries();
+    I_ClampSelectedPlayerCount();
     N64_DEBUGF("WAD browser: entering UI with %d entries\n", n64_wad_count);
     I_N64LogMemoryStats("wad_browser:enter");
 
@@ -1564,6 +1622,12 @@ const char* I_N64GetSelectedWadPath(void)
 const char* I_N64GetSelectedBaseIwadPath(void)
 {
     return n64_selected_base_iwad;
+}
+
+int I_N64GetSelectedPlayerCount(void)
+{
+    I_ClampSelectedPlayerCount();
+    return n64_selected_player_count;
 }
 
 void I_N64SetBrowserStatusMessage(const char* message)

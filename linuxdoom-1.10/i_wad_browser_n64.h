@@ -6,6 +6,7 @@
 void I_N64RunWadBrowser(void);
 const char* I_N64GetSelectedWadPath(void);
 const char* I_N64GetSelectedBaseIwadPath(void);
+int I_N64GetSelectedPlayerCount(void);
 void I_N64SetBrowserStatusMessage(const char* message);
 
 #endif

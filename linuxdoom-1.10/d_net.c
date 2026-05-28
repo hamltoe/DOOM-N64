@@ -73,16 +73,41 @@ int		lastnettic;
 int		skiptics;
 int		ticdup;		
 int		maxsend;	// BACKUPTICS/(2*ticdup)-1
+static int      d_local_player_count = 1;
 
 
 void D_ProcessEvents (void); 
 void G_BuildTiccmd (ticcmd_t *cmd); 
 void D_DoAdvanceDemo (void);
+#ifdef N64
+void G_BuildTiccmdN64Local(ticcmd_t* cmd, int playernum, const n64_local_input_t* input);
+#endif
 
 static void D_ResetNetRuntimeState(void);
  
 boolean		reboundpacket;
 doomdata_t	reboundstore;
+
+
+void D_SetLocalPlayerCount(int player_count)
+{
+	if (player_count < 1)
+		player_count = 1;
+	else if (player_count > MAXPLAYERS)
+		player_count = MAXPLAYERS;
+
+	d_local_player_count = player_count;
+}
+
+int D_GetLocalPlayerCount(void)
+{
+	return d_local_player_count;
+}
+
+boolean D_LocalMultiplayerEnabled(void)
+{
+	return d_local_player_count > 1;
+}
 
 
 
@@ -374,6 +399,10 @@ void NetUpdate (void)
     int				i,j;
     int				realstart;
     int				gameticdiv;
+#ifdef N64
+	n64_local_input_t local_input;
+	int playernum;
+#endif
     
     // check time
     nowtime = I_GetTime ()/ticdup;
@@ -396,6 +425,43 @@ void NetUpdate (void)
 	
 		
     netbuffer->player = consoleplayer;
+
+#ifdef N64
+	if (D_LocalMultiplayerEnabled())
+	{
+		gameticdiv = gametic / ticdup;
+
+		for (i = 0; i < newtics; i++)
+		{
+			I_StartTic();
+			D_ProcessEvents();
+			if (maketic - gameticdiv >= BACKUPTICS/2 - 1)
+				break;
+
+			for (playernum = 0; playernum < doomcom->numplayers && playernum < MAXPLAYERS; playernum++)
+			{
+				if (!playeringame[playernum])
+					continue;
+
+				I_N64GetLocalInputState(playernum, &local_input);
+				G_BuildTiccmdN64Local(&netcmds[playernum][maketic % BACKUPTICS],
+									  playernum,
+									  &local_input);
+			}
+
+			maketic++;
+		}
+
+		if (singletics)
+			return;
+
+		for (i = 0; i < doomcom->numnodes && i < MAXNETNODES; i++)
+			if (nodeingame[i])
+				nettics[i] = maketic;
+
+		return;
+	}
+#endif
     
     // build new ticcmds for console player
     gameticdiv = gametic/ticdup;
@@ -575,7 +641,7 @@ void D_CheckNetGame (void)
     
     netbuffer = &doomcom->data;
     consoleplayer = displayplayer = doomcom->consoleplayer;
-    if (netgame)
+	if (netgame && !D_LocalMultiplayerEnabled())
 	D_ArbitrateNetStart ();
 
     printf ("startskill %i  deathmatch: %i  startmap: %i  startepisode: %i\n",
@@ -587,8 +653,13 @@ void D_CheckNetGame (void)
     if (maxsend<1)
 	maxsend = 1;
 			
+    for (i=0 ; i<MAXPLAYERS ; i++)
+	playeringame[i] = false;
     for (i=0 ; i<doomcom->numplayers ; i++)
+    {
 	playeringame[i] = true;
+	nodeforplayer[i] = i;
+    }
     for (i=0 ; i<doomcom->numnodes ; i++)
 	nodeingame[i] = true;
 	
@@ -713,7 +784,7 @@ void TryRunTics (void)
 		 "=======real: %i  avail: %i  game: %i\n",
 		 realtics, availabletics,counts);
 
-    if (!demoplayback)
+    if (!demoplayback && !D_LocalMultiplayerEnabled())
     {	
 	// ideally nettics[0] should be 1 - 3 tics above lowtic
 	// if we are consistantly slower, speed up time

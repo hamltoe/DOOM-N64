@@ -53,6 +53,25 @@ void I_ReadScreen (byte* scr);
 void I_BeginRead (void);
 void I_EndRead (void);
 
+#ifdef N64
+typedef struct n64_local_input_s
+{
+	int joy_x;
+	int joy_y;
+	boolean strafe_left;
+	boolean strafe_right;
+	boolean speed;
+	boolean fire;
+	boolean use;
+	int weapon_key;
+} n64_local_input_t;
+
+void I_N64GetLocalInputState(int player_index, n64_local_input_t* out_state);
+void I_N64SplitScreenBeginFrame(int player_count);
+void I_N64SplitScreenCaptureView(int view_index);
+void I_N64SplitScreenEndFrame(void);
+#endif
+
 
 
 #endif

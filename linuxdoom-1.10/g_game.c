@@ -37,12 +37,14 @@ rcsid[] = "$Id: g_game.c,v 1.8 1997/02/03 22:45:09 b1 Exp $";
 #include "m_menu.h"
 #include "m_random.h"
 #include "i_system.h"
+#include "i_video.h"
 
 #include "p_setup.h"
 #include "p_saveg.h"
 #include "p_tick.h"
 
 #include "d_main.h"
+#include "d_net.h"
 
 #include "wi_stuff.h"
 #include "hu_stuff.h"
@@ -203,6 +205,10 @@ int             joyxmove;
 int		joyymove;
 boolean         joyarray[5]; 
 boolean*	joybuttons = &joyarray[1];		// allow [-1] 
+
+#ifdef N64
+static int      n64_turnheld[MAXPLAYERS];
+#endif
  
 int		savegameslot; 
 char		savedescription[32]; 
@@ -455,6 +461,102 @@ void G_BuildTiccmd (ticcmd_t* cmd)
 	cmd->buttons = BT_SPECIAL | BTS_SAVEGAME | (savegameslot<<BTS_SAVESHIFT); 
     } 
 } 
+
+#ifdef N64
+void G_BuildTiccmdN64Local(ticcmd_t* cmd, int playernum, const n64_local_input_t* input)
+{
+    int speed;
+    int tspeed;
+    int forward;
+    int side;
+    int joyx;
+    int joyy;
+    ticcmd_t* base;
+
+    if (!cmd)
+        return;
+
+    if (playernum < 0 || playernum >= MAXPLAYERS)
+        playernum = 0;
+
+    base = I_BaseTiccmd();
+    memcpy(cmd, base, sizeof(*cmd));
+
+    cmd->consistancy = consistancy[playernum][maketic % BACKUPTICS];
+
+    speed = (input && input->speed) ? 1 : 0;
+    joyx = input ? input->joy_x : 0;
+    joyy = input ? input->joy_y : 0;
+
+    if (joyx)
+        n64_turnheld[playernum] += ticdup;
+    else
+        n64_turnheld[playernum] = 0;
+
+    if (n64_turnheld[playernum] < SLOWTURNTICS)
+        tspeed = 2;
+    else
+        tspeed = speed;
+
+    forward = 0;
+    side = 0;
+
+    if (joyx > 0)
+        cmd->angleturn -= G_ScaleJoyAnalog(joyx, angleturn[tspeed]);
+    if (joyx < 0)
+        cmd->angleturn += G_ScaleJoyAnalog(joyx, angleturn[tspeed]);
+
+    if (joyy < 0)
+        forward += G_ScaleJoyAnalog(joyy, forwardmove[speed]);
+    if (joyy > 0)
+        forward -= G_ScaleJoyAnalog(joyy, forwardmove[speed]);
+
+    if (input && input->strafe_right)
+        side += sidemove[speed];
+    if (input && input->strafe_left)
+        side -= sidemove[speed];
+
+    if (input && input->fire)
+        cmd->buttons |= BT_ATTACK;
+
+    if (input && input->use)
+        cmd->buttons |= BT_USE;
+
+    if (input && input->weapon_key >= '1' && input->weapon_key <= '7')
+    {
+        cmd->buttons |= BT_CHANGE;
+        cmd->buttons |= (input->weapon_key - '1') << BT_WEAPONSHIFT;
+    }
+
+    if (forward > MAXPLMOVE)
+        forward = MAXPLMOVE;
+    else if (forward < -MAXPLMOVE)
+        forward = -MAXPLMOVE;
+
+    if (side > MAXPLMOVE)
+        side = MAXPLMOVE;
+    else if (side < -MAXPLMOVE)
+        side = -MAXPLMOVE;
+
+    cmd->forwardmove += forward;
+    cmd->sidemove += side;
+
+    if (playernum == consoleplayer)
+    {
+        if (sendpause)
+        {
+            sendpause = false;
+            cmd->buttons = BT_SPECIAL | BTS_PAUSE;
+        }
+
+        if (sendsave)
+        {
+            sendsave = false;
+            cmd->buttons = BT_SPECIAL | BTS_SAVEGAME | (savegameslot << BTS_SAVESHIFT);
+        }
+    }
+}
+#endif
  
 
 //
@@ -514,6 +616,10 @@ void G_DoLoadLevel (void)
     sendpause = sendsave = paused = false; 
     memset (mousearray, 0, sizeof(mousearray)); 
     memset (joyarray, 0, sizeof(joyarray)); 
+
+#ifdef N64
+    memset(n64_turnheld, 0, sizeof(n64_turnheld));
+#endif
 } 
  
  
@@ -1364,11 +1470,38 @@ G_DeferedInitNew
 
 void G_DoNewGame (void) 
 {
+    int i;
+
     demoplayback = false; 
     netdemo = false;
-    netgame = false;
-    deathmatch = false;
-    playeringame[1] = playeringame[2] = playeringame[3] = 0;
+
+    if (D_LocalMultiplayerEnabled())
+    {
+        netgame = true;
+        if (!M_CheckParm("-deathmatch") && !M_CheckParm("-altdeath"))
+            deathmatch = false;
+        for (i = 0; i < MAXPLAYERS; i++)
+            playeringame[i] = (i < D_GetLocalPlayerCount());
+
+        // Expand doomcom/nodeingame to match the chosen local player count so
+        // NetUpdate iterates every local player.
+        if (doomcom)
+        {
+            extern boolean nodeingame[MAXNETNODES];
+            int np = D_GetLocalPlayerCount();
+            doomcom->numplayers = np;
+            doomcom->numnodes = np;
+            for (i = 0; i < np && i < MAXNETNODES; i++)
+                nodeingame[i] = true;
+        }
+    }
+    else
+    {
+        netgame = false;
+        deathmatch = false;
+        playeringame[1] = playeringame[2] = playeringame[3] = 0;
+    }
+
     respawnparm = false;
     fastparm = false;
     nomonsters = false;

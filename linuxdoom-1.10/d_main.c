@@ -139,6 +139,9 @@ void D_CheckNetGame (void);
 void D_ProcessEvents (void);
 void G_BuildTiccmd (ticcmd_t* cmd);
 void D_DoAdvanceDemo (void);
+#ifdef N64
+void G_BuildTiccmdN64Local(ticcmd_t* cmd, int playernum, const n64_local_input_t* input);
+#endif
 
 
 //
@@ -197,7 +200,50 @@ void D_ProcessEvents (void)
 gamestate_t     wipegamestate = GS_DEMOSCREEN;
 extern  boolean setsizeneeded;
 extern  int             showMessages;
+extern  int             detailLevel;
+extern  int             screenblocks;
+extern  int             setblocks;
+extern  int             setdetail;
 void R_ExecuteSetViewSize (void);
+
+#ifdef N64
+static int D_N64CountActivePlayers(void)
+{
+	int i;
+	int count;
+
+	if (gamestate != GS_LEVEL || !D_LocalMultiplayerEnabled() || !netgame)
+		return 1;
+
+	count = 0;
+	for (i = 0; i < MAXPLAYERS; i++)
+		if (playeringame[i] && players[i].mo)
+		    count++;
+
+	if (count < 1)
+		count = 1;
+
+	return count;
+
+}
+
+static void D_N64PrepareSplitViewSize(int splitplayers)
+{
+	if (splitplayers > 1)
+	{
+	    if (scaledviewwidth != SCREENWIDTH || viewheight != SCREENHEIGHT)
+	    {
+		R_SetViewSize(11, detailLevel);
+		R_ExecuteSetViewSize();
+	    }
+	}
+	else if (setblocks != screenblocks || setdetail != detailLevel)
+	{
+	    R_SetViewSize(screenblocks, detailLevel);
+	    R_ExecuteSetViewSize();
+	}
+}
+#endif
 
 void D_Display (void)
 {
@@ -211,12 +257,25 @@ void D_Display (void)
     int				tics;
     int				wipestart;
     int				y;
+	int                         splitplayers;
+#ifdef N64
+	int                         i;
+	int                         splitslot;
+	int                         restoredisplayplayer;
+#endif
     boolean			done;
     boolean			wipe;
     boolean			redrawsbar;
 
     if (nodrawers)
 	return;                    // for comparative timing / profiling
+
+#ifdef N64
+	splitplayers = D_N64CountActivePlayers();
+	D_N64PrepareSplitViewSize(splitplayers);
+#else
+	splitplayers = 1;
+#endif
 		
     redrawsbar = false;
     
@@ -252,8 +311,15 @@ void D_Display (void)
 	    redrawsbar = true;
 	if (inhelpscreensstate && !inhelpscreens)
 	    redrawsbar = true;              // just put away the help screen
-	ST_Drawer (viewheight == 200, redrawsbar );
-	fullscreen = viewheight == 200;
+	if (splitplayers < 2)
+	{
+	    ST_Drawer (viewheight == 200, redrawsbar );
+	    fullscreen = viewheight == 200;
+	}
+	else
+	{
+	    fullscreen = true;
+	}
 	break;
 
       case GS_INTERMISSION:
@@ -274,9 +340,37 @@ void D_Display (void)
     
     // draw the view directly
     if (gamestate == GS_LEVEL && !automapactive && gametic)
-	R_RenderPlayerView (&players[displayplayer]);
+	{
+#ifdef N64
+	    if (splitplayers > 1)
+	    {
+		restoredisplayplayer = displayplayer;
+		splitslot = 0;
+		I_N64SplitScreenBeginFrame(splitplayers);
+		for (i = 0; i < MAXPLAYERS; i++)
+		{
+		    if (!playeringame[i] || !players[i].mo)
+			continue;
 
-    if (gamestate == GS_LEVEL && gametic)
+		    displayplayer = i;
+		    R_RenderPlayerView (&players[i]);
+		    I_N64SplitScreenCaptureView(splitslot++);
+		}
+		if (splitslot > 0)
+		    I_N64SplitScreenEndFrame();
+		else
+		    R_RenderPlayerView (&players[restoredisplayplayer]);
+		displayplayer = restoredisplayplayer;
+	    }
+	    else
+#endif
+	    {
+		R_RenderPlayerView (&players[displayplayer]);
+	    }
+	}
+
+
+    if (gamestate == GS_LEVEL && gametic && splitplayers < 2)
 	HU_Drawer ();
     
     // clean up border stuff
@@ -287,11 +381,15 @@ void D_Display (void)
     if (gamestate == GS_LEVEL && oldgamestate != GS_LEVEL)
     {
 	viewactivestate = false;        // view was not active
-	R_FillBackScreen ();    // draw the pattern into the back screen
+	if (splitplayers < 2)
+	    R_FillBackScreen ();    // draw the pattern into the back screen
     }
 
     // see if the border needs to be updated to the screen
-    if (gamestate == GS_LEVEL && !automapactive && scaledviewwidth != 320)
+    if (gamestate == GS_LEVEL
+	&& !automapactive
+	&& scaledviewwidth != 320
+	&& splitplayers < 2)
     {
 	if (menuactive || menuactivestate || !viewactivestate)
 	    borderdrawcount = 3;
@@ -362,6 +460,11 @@ extern  boolean         demorecording;
 
 void D_DoomLoop (void)
 {
+#ifdef N64
+	n64_local_input_t local_input;
+	int local_player;
+#endif
+
     if (demorecording)
 	G_BeginRecording ();
 		
@@ -385,7 +488,25 @@ void D_DoomLoop (void)
 	{
 	    I_StartTic ();
 	    D_ProcessEvents ();
-	    G_BuildTiccmd (&netcmds[consoleplayer][maketic%BACKUPTICS]);
+#ifdef N64
+	    if (D_LocalMultiplayerEnabled())
+	    {
+		for (local_player = 0; local_player < MAXPLAYERS; local_player++)
+		{
+		    if (!playeringame[local_player])
+			continue;
+
+		    I_N64GetLocalInputState(local_player, &local_input);
+		    G_BuildTiccmdN64Local(&netcmds[local_player][maketic%BACKUPTICS],
+					 local_player,
+					 &local_input);
+		}
+	    }
+	    else
+#endif
+	    {
+		G_BuildTiccmd (&netcmds[consoleplayer][maketic%BACKUPTICS]);
+	    }
 	    if (advancedemo)
 		D_DoAdvanceDemo ();
 	    M_Ticker ();

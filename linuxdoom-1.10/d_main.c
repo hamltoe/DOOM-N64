@@ -50,6 +50,7 @@ static const char rcsid[] = "$Id: d_main.c,v 1.8 1997/02/03 22:45:09 b1 Exp $";
 
 #include "dstrings.h"
 #include "sounds.h"
+#include "d_items.h"
 
 
 #include "z_zone.h"
@@ -207,6 +208,74 @@ extern  int             setdetail;
 void R_ExecuteSetViewSize (void);
 
 #ifdef N64
+typedef struct d_n64_split_rect_s
+{
+	int x;
+	int y;
+	int w;
+	int h;
+} d_n64_split_rect_t;
+
+#define N64_SPLIT_HUD_PAD_X 2
+#define N64_SPLIT_HUD_TEXT_Y_OFFSET 10
+
+static int D_N64GetPlayerHudAmmo(const player_t* player)
+{
+	ammotype_t ammotype;
+
+	if (!player)
+	    return -1;
+
+	ammotype = weaponinfo[player->readyweapon].ammo;
+	if (ammotype == am_noammo)
+	    return -1;
+
+	return player->ammo[ammotype];
+}
+
+static void D_N64DrawSplitHud(const d_n64_split_rect_t* pane_rect, int playernum)
+{
+	player_t* player;
+	int text_y;
+	int health;
+	int armor;
+	int ammo;
+	char hudline[48];
+
+	if (!pane_rect)
+	    return;
+
+	if (playernum < 0 || playernum >= MAXPLAYERS || !playeringame[playernum])
+	    return;
+
+	if (pane_rect->w < 1 || pane_rect->h < 1)
+	    return;
+
+	player = &players[playernum];
+	text_y = pane_rect->y + pane_rect->h - N64_SPLIT_HUD_TEXT_Y_OFFSET;
+	if (text_y < pane_rect->y)
+	    text_y = pane_rect->y;
+
+	health = player->health;
+	if (health < 0)
+	    health = 0;
+
+	armor = player->armorpoints;
+	if (armor < 0)
+	    armor = 0;
+
+	ammo = D_N64GetPlayerHudAmmo(player);
+	if (ammo >= 0)
+	    sprintf(hudline, "P%d H%d A%d M%d", playernum + 1, health, armor, ammo);
+	else
+	    sprintf(hudline, "P%d H%d A%d M-", playernum + 1, health, armor);
+
+	M_DrawText(pane_rect->x + N64_SPLIT_HUD_PAD_X,
+		   text_y,
+		   true,
+		   hudline);
+}
+
 static int D_N64CountActivePlayers(void)
 {
 	int i;
@@ -227,17 +296,151 @@ static int D_N64CountActivePlayers(void)
 
 }
 
+static void D_N64GetSplitRect(int splitplayers, int view_index, d_n64_split_rect_t* rect)
+{
+	if (!rect)
+	    return;
+
+	rect->x = 0;
+	rect->y = 0;
+	rect->w = 0;
+	rect->h = 0;
+
+	if (view_index < 0)
+	    return;
+
+	if (splitplayers <= 2)
+	{
+	    if (view_index == 0)
+	    {
+		rect->x = 0;
+		rect->y = 0;
+		rect->w = SCREENWIDTH;
+		rect->h = SCREENHEIGHT / 2;
+	    }
+	    else if (view_index == 1)
+	    {
+		rect->x = 0;
+		rect->y = SCREENHEIGHT / 2;
+		rect->w = SCREENWIDTH;
+		rect->h = SCREENHEIGHT / 2;
+	    }
+	    return;
+	}
+
+	if (splitplayers == 3)
+	{
+	    switch (view_index)
+	    {
+	      case 0:
+		rect->x = 0;
+		rect->y = 0;
+		rect->w = SCREENWIDTH / 2;
+		rect->h = SCREENHEIGHT / 2;
+		break;
+	      case 1:
+		rect->x = SCREENWIDTH / 2;
+		rect->y = 0;
+		rect->w = SCREENWIDTH / 2;
+		rect->h = SCREENHEIGHT / 2;
+		break;
+	      case 2:
+		rect->x = 0;
+		rect->y = SCREENHEIGHT / 2;
+		rect->w = SCREENWIDTH / 2;
+		rect->h = SCREENHEIGHT / 2;
+		break;
+	      default:
+		break;
+	    }
+	    return;
+	}
+
+	switch (view_index)
+	{
+	  case 0:
+	    rect->x = 0;
+	    rect->y = 0;
+	    rect->w = SCREENWIDTH / 2;
+	    rect->h = SCREENHEIGHT / 2;
+	    break;
+	  case 1:
+	    rect->x = SCREENWIDTH / 2;
+	    rect->y = 0;
+	    rect->w = SCREENWIDTH / 2;
+	    rect->h = SCREENHEIGHT / 2;
+	    break;
+	  case 2:
+	    rect->x = 0;
+	    rect->y = SCREENHEIGHT / 2;
+	    rect->w = SCREENWIDTH / 2;
+	    rect->h = SCREENHEIGHT / 2;
+	    break;
+	  case 3:
+	    rect->x = SCREENWIDTH / 2;
+	    rect->y = SCREENHEIGHT / 2;
+	    rect->w = SCREENWIDTH / 2;
+	    rect->h = SCREENHEIGHT / 2;
+	    break;
+	  default:
+	    break;
+	}
+}
+
+// Correctness-first split detail policy: forcing blocky low detail in 3-4P can
+// reveal tiny multiplayer sprite fragments at wall edges due coarse occlusion
+// quantization. Keep user's configured detail for all split layouts.
+static int D_N64SplitDetail(int splitplayers)
+{
+	(void)splitplayers;
+	return detailLevel;
+}
+
+static void D_N64EnsureSplitViewSize(int width, int height, int detail)
+{
+	if (width < 1 || height < 1)
+	    return;
+
+	if (scaledviewwidth != width || viewheight != height || detailshift != detail)
+	{
+	    R_SetN64ViewSize(width, height, detail);
+	    R_ExecuteSetViewSize();
+	}
+}
+
 static void D_N64PrepareSplitViewSize(int splitplayers)
 {
+	int normalwidth;
+	int normalheight;
+	int splitwidth;
+	int splitheight;
+
 	if (splitplayers > 1)
 	{
-	    if (scaledviewwidth != SCREENWIDTH || viewheight != SCREENHEIGHT)
-	    {
-		R_SetViewSize(11, detailLevel);
-		R_ExecuteSetViewSize();
-	    }
+	    splitwidth = (splitplayers <= 2) ? SCREENWIDTH : (SCREENWIDTH / 2);
+	    splitheight = SCREENHEIGHT / 2;
+
+	    D_N64EnsureSplitViewSize(splitwidth, splitheight, D_N64SplitDetail(splitplayers));
+	    return;
 	}
-	else if (setblocks != screenblocks || setdetail != detailLevel)
+
+	R_ClearN64ViewSizeOverride();
+
+	if (screenblocks == 11)
+	{
+	    normalwidth = SCREENWIDTH;
+	    normalheight = SCREENHEIGHT;
+	}
+	else
+	{
+	    normalwidth = screenblocks * 32;
+	    normalheight = (screenblocks * 168 / 10) & ~7;
+	}
+
+	if (setblocks != screenblocks
+	    || setdetail != detailLevel
+	    || scaledviewwidth != normalwidth
+	    || viewheight != normalheight)
 	{
 	    R_SetViewSize(screenblocks, detailLevel);
 	    R_ExecuteSetViewSize();
@@ -262,6 +465,9 @@ void D_Display (void)
 	int                         i;
 	int                         splitslot;
 	int                         restoredisplayplayer;
+	int                         splitdetail;
+	d_n64_split_rect_t          splitrect;
+	d_n64_split_rect_t          viewrect;
 #endif
     boolean			done;
     boolean			wipe;
@@ -346,15 +552,37 @@ void D_Display (void)
 	    {
 		restoredisplayplayer = displayplayer;
 		splitslot = 0;
+		splitdetail = D_N64SplitDetail(splitplayers);
 		I_N64SplitScreenBeginFrame(splitplayers);
 		for (i = 0; i < MAXPLAYERS; i++)
 		{
 		    if (!playeringame[i] || !players[i].mo)
 			continue;
 
+		    D_N64GetSplitRect(splitplayers, splitslot, &splitrect);
+		    viewrect = splitrect;
+
+		    if (viewrect.w <= 0 || viewrect.h <= 0)
+		    {
+			splitslot++;
+			continue;
+		    }
+
+		    // NOTE: 4-player interleaving (rendering only half the quadrants
+		    // per frame) was attempted here for perf, but produced "ghost
+		    // player through walls" artifacts: stale quadrants kept the
+		    // previous tic's sprite positions while game logic continued
+		    // advancing, so other players appeared at old locations that the
+		    // current world geometry now occludes. Always render every active
+		    // player's view to keep visuals correct.
+
+		    D_N64EnsureSplitViewSize(viewrect.w, viewrect.h, splitdetail);
+		    R_SetViewWindow(viewrect.x, viewrect.y);
+
 		    displayplayer = i;
 		    R_RenderPlayerView (&players[i]);
-		    I_N64SplitScreenCaptureView(splitslot++);
+		    D_N64DrawSplitHud(&splitrect, i);
+		    splitslot++;
 		}
 		if (splitslot > 0)
 		    I_N64SplitScreenEndFrame();
@@ -411,9 +639,11 @@ void D_Display (void)
     {
 	if (automapactive)
 	    y = 4;
+	else if (splitplayers > 1)
+	    y = 4;
 	else
 	    y = viewwindowy+4;
-	V_DrawPatchDirect(viewwindowx+(scaledviewwidth-68)/2,
+	V_DrawPatchDirect((splitplayers > 1) ? ((SCREENWIDTH-68)/2) : (viewwindowx+(scaledviewwidth-68)/2),
 			  y,0,W_CacheLumpName ("M_PAUSE", PU_CACHE));
     }
 

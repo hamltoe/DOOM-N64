@@ -15,13 +15,13 @@
 
 static boolean video_initialized;
 static surface_t doom_screen8;
-static byte* n64_split_screen;
 static byte* n64_aux_screens[3];
 static boolean n64_aux_screen_owned[3];
 static uint16_t doom_tlut[256] __attribute__((aligned(8)));
 static uint64_t last_menu_present_ms;
 static boolean n64_split_active;
 static int n64_split_player_count;
+static int n64_split_prev_count;
 static n64_local_input_t n64_local_inputs[MAXPLAYERS];
 static boolean n64_local_weapon_cycle_down[MAXPLAYERS];
 static boolean n64_local_weapon_prev_down[MAXPLAYERS];
@@ -294,134 +294,6 @@ static void I_UpdateWeaponSelect(boolean down, boolean next, boolean* select_dow
     *select_down = down;
 }
 
-typedef struct n64_split_rect_s
-{
-    int x;
-    int y;
-    int w;
-    int h;
-} n64_split_rect_t;
-
-static void I_GetSplitRect(int view_index, n64_split_rect_t* rect)
-{
-    if (!rect)
-        return;
-
-    rect->x = 0;
-    rect->y = 0;
-    rect->w = 0;
-    rect->h = 0;
-
-    if (view_index < 0)
-        return;
-
-    if (n64_split_player_count <= 2)
-    {
-        if (view_index == 0)
-        {
-            rect->x = 0;
-            rect->y = 0;
-            rect->w = SCREENWIDTH;
-            rect->h = SCREENHEIGHT / 2;
-        }
-        else if (view_index == 1)
-        {
-            rect->x = 0;
-            rect->y = SCREENHEIGHT / 2;
-            rect->w = SCREENWIDTH;
-            rect->h = SCREENHEIGHT / 2;
-        }
-        return;
-    }
-
-    if (n64_split_player_count == 3)
-    {
-        switch (view_index)
-        {
-            case 0:
-                rect->x = 0;
-                rect->y = 0;
-                rect->w = SCREENWIDTH / 2;
-                rect->h = SCREENHEIGHT / 2;
-                break;
-            case 1:
-                rect->x = SCREENWIDTH / 2;
-                rect->y = 0;
-                rect->w = SCREENWIDTH / 2;
-                rect->h = SCREENHEIGHT / 2;
-                break;
-            case 2:
-                rect->x = 0;
-                rect->y = SCREENHEIGHT / 2;
-                rect->w = SCREENWIDTH;
-                rect->h = SCREENHEIGHT / 2;
-                break;
-            default:
-                break;
-        }
-        return;
-    }
-
-    switch (view_index)
-    {
-        case 0:
-            rect->x = 0;
-            rect->y = 0;
-            rect->w = SCREENWIDTH / 2;
-            rect->h = SCREENHEIGHT / 2;
-            break;
-        case 1:
-            rect->x = SCREENWIDTH / 2;
-            rect->y = 0;
-            rect->w = SCREENWIDTH / 2;
-            rect->h = SCREENHEIGHT / 2;
-            break;
-        case 2:
-            rect->x = 0;
-            rect->y = SCREENHEIGHT / 2;
-            rect->w = SCREENWIDTH / 2;
-            rect->h = SCREENHEIGHT / 2;
-            break;
-        case 3:
-            rect->x = SCREENWIDTH / 2;
-            rect->y = SCREENHEIGHT / 2;
-            rect->w = SCREENWIDTH / 2;
-            rect->h = SCREENHEIGHT / 2;
-            break;
-        default:
-            break;
-    }
-}
-
-static void I_SplitBlitScaled(const n64_split_rect_t* rect)
-{
-    int x;
-    int y;
-    int src_x;
-    int src_y;
-    byte* src;
-    byte* dst;
-
-    if (!rect || rect->w <= 0 || rect->h <= 0)
-        return;
-
-    src = screens[0];
-    dst = n64_split_screen;
-    if (!src || !dst)
-        return;
-
-    for (y = 0; y < rect->h; y++)
-    {
-        src_y = (y * SCREENHEIGHT) / rect->h;
-        for (x = 0; x < rect->w; x++)
-        {
-            src_x = (x * SCREENWIDTH) / rect->w;
-            dst[(rect->y + y) * SCREENWIDTH + (rect->x + x)] =
-                src[src_y * SCREENWIDTH + src_x];
-        }
-    }
-}
-
 static void I_UpdateLocalWeaponInput(int playernum,
                                      joypad_buttons_t buttons,
                                      n64_local_input_t* state)
@@ -525,21 +397,22 @@ void I_N64SplitScreenBeginFrame(int player_count)
         player_count = MAXPLAYERS;
 
     n64_split_player_count = player_count;
-    n64_split_active = (n64_split_screen != NULL) && (player_count > 1);
+    n64_split_active = (screens[0] != NULL) && (player_count > 1);
 
+    // Correctness-first clear policy:
+    // - 3/4-player layouts clear every frame to prevent stale fragments
+    //   persisting when some low-detail edge cases underdraw a pixel.
+    // - 2-player keeps clear-on-layout-change to preserve bandwidth savings.
     if (n64_split_active)
-        memset(n64_split_screen, 0, SCREENWIDTH * SCREENHEIGHT);
-}
-
-void I_N64SplitScreenCaptureView(int view_index)
-{
-    n64_split_rect_t rect;
-
-    if (!n64_split_active)
-        return;
-
-    I_GetSplitRect(view_index, &rect);
-    I_SplitBlitScaled(&rect);
+    {
+        if (player_count >= 3 || player_count != n64_split_prev_count)
+            memset(screens[0], 0, SCREENWIDTH * SCREENHEIGHT);
+        n64_split_prev_count = player_count;
+    }
+    else
+    {
+        n64_split_prev_count = 0;
+    }
 }
 
 void I_N64SplitScreenEndFrame(void)
@@ -548,25 +421,23 @@ void I_N64SplitScreenEndFrame(void)
     int y;
     int vertical_divider_height;
 
-    if (!n64_split_active || !n64_split_screen || !screens[0])
+    if (!n64_split_active || !screens[0])
         return;
 
     if (n64_split_player_count <= 2)
     {
-        memset(n64_split_screen + (SCREENHEIGHT / 2 - 1) * SCREENWIDTH, 0, SCREENWIDTH);
+        memset(screens[0] + (SCREENHEIGHT / 2 - 1) * SCREENWIDTH, 0, SCREENWIDTH);
     }
     else
     {
-        memset(n64_split_screen + (SCREENHEIGHT / 2 - 1) * SCREENWIDTH, 0, SCREENWIDTH);
-        vertical_divider_height = (n64_split_player_count == 3) ? (SCREENHEIGHT / 2) : SCREENHEIGHT;
+        memset(screens[0] + (SCREENHEIGHT / 2 - 1) * SCREENWIDTH, 0, SCREENWIDTH);
+        vertical_divider_height = SCREENHEIGHT;
         for (y = 0; y < vertical_divider_height; y++)
         {
             for (x = SCREENWIDTH / 2 - 1; x <= SCREENWIDTH / 2; x++)
-                n64_split_screen[y * SCREENWIDTH + x] = 0;
+                screens[0][y * SCREENWIDTH + x] = 0;
         }
     }
-
-    memcpy(screens[0], n64_split_screen, SCREENWIDTH * SCREENHEIGHT);
 }
 
 void I_ShutdownGraphics(void)
@@ -588,12 +459,6 @@ void I_ShutdownGraphics(void)
         n64_aux_screens[i] = NULL;
         n64_aux_screen_owned[i] = false;
         screens[i + 1] = NULL;
-    }
-
-    if (n64_split_screen)
-    {
-        free(n64_split_screen);
-        n64_split_screen = NULL;
     }
 
     n64_split_active = false;
@@ -763,11 +628,6 @@ void I_InitGraphics(void)
     screens[0] = (byte*)doom_screen8.buffer;
     memset(screens[0], 0, SCREENWIDTH * SCREENHEIGHT);
 
-    n64_split_screen = (byte*)malloc((size_t)SCREENWIDTH * (size_t)SCREENHEIGHT);
-    if (!n64_split_screen)
-        I_Error("I_InitGraphics: failed to allocate split-screen buffer");
-    memset(n64_split_screen, 0, SCREENWIDTH * SCREENHEIGHT);
-
     aux_size = (size_t)SCREENWIDTH * (size_t)SCREENHEIGHT;
     for (i = 0; i < 3; i++)
     {
@@ -815,6 +675,7 @@ void I_InitGraphics(void)
 
     n64_split_active = false;
     n64_split_player_count = 1;
+    n64_split_prev_count = 0;
     memset(n64_local_inputs, 0, sizeof(n64_local_inputs));
     memset(n64_local_weapon_cycle_down, 0, sizeof(n64_local_weapon_cycle_down));
     memset(n64_local_weapon_prev_down, 0, sizeof(n64_local_weapon_prev_down));

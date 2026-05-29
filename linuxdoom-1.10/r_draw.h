@@ -92,6 +92,11 @@ R_InitBuffer
 ( int		width,
   int		height );
 
+void
+R_SetViewWindow
+( int		x,
+  int		y );
+
 
 // Initialize color translation tables,
 //  for player rendering etc.

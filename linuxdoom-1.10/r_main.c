@@ -652,6 +652,11 @@ void R_InitLightTables (void)
 boolean		setsizeneeded;
 int		setblocks;
 int		setdetail;
+#ifdef N64
+static boolean	n64_viewsize_override;
+static int	n64_override_width;
+static int	n64_override_height;
+#endif
 
 
 void
@@ -663,6 +668,31 @@ R_SetViewSize
     setblocks = blocks;
     setdetail = detail;
 }
+
+#ifdef N64
+void R_SetN64ViewSize(int width, int height, int detail)
+{
+    if (width < 1 || height < 1)
+        return;
+
+    if (width > SCREENWIDTH)
+        width = SCREENWIDTH;
+
+    if (height > SCREENHEIGHT)
+        height = SCREENHEIGHT;
+
+    n64_viewsize_override = true;
+    n64_override_width = width;
+    n64_override_height = height;
+    setdetail = detail;
+    setsizeneeded = true;
+}
+
+void R_ClearN64ViewSizeOverride(void)
+{
+    n64_viewsize_override = false;
+}
+#endif
 
 
 //
@@ -679,6 +709,14 @@ void R_ExecuteSetViewSize (void)
 
     setsizeneeded = false;
 
+#ifdef N64
+    if (n64_viewsize_override)
+    {
+	scaledviewwidth = n64_override_width;
+	viewheight = n64_override_height;
+    }
+    else
+#endif
     if (setblocks == 11)
     {
 	scaledviewwidth = SCREENWIDTH;
@@ -709,8 +747,8 @@ void R_ExecuteSetViewSize (void)
     else
     {
 	colfunc = basecolfunc = R_DrawColumnLow;
-	fuzzcolfunc = R_DrawFuzzColumn;
-	transcolfunc = R_DrawTranslatedColumn;
+    fuzzcolfunc = R_DrawFuzzColumnLow;
+    transcolfunc = R_DrawTranslatedColumnLow;
 	spanfunc = R_DrawSpanLow;
     }
 

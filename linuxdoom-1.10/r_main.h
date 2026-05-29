@@ -164,6 +164,12 @@ void R_Init (void);
 // Called by M_Responder.
 void R_SetViewSize (int blocks, int detail);
 
+#ifdef N64
+// N64 split-screen can request exact viewport dimensions instead of setblocks steps.
+void R_SetN64ViewSize(int width, int height, int detail);
+void R_ClearN64ViewSizeOverride(void);
+#endif
+
 #endif
 //-----------------------------------------------------------------------------
 //

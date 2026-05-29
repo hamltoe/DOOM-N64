@@ -366,6 +366,61 @@ void R_DrawFuzzColumn (void)
 	frac += fracstep; 
     } while (count--); 
 } 
+
+void R_DrawFuzzColumnLow (void)
+{
+    int			count;
+    byte*		dest;
+    byte*		dest2;
+    fixed_t		frac;
+    fixed_t		fracstep;
+    byte		fuzzed;
+
+    if (!dc_yl)
+	dc_yl = 1;
+
+    if (dc_yh == viewheight-1)
+	dc_yh = viewheight - 2;
+
+    count = dc_yh - dc_yl;
+
+    if (count < 0)
+	return;
+
+#ifdef RANGECHECK
+    if ((unsigned)dc_x >= SCREENWIDTH
+	|| dc_yl < 0 || dc_yh >= SCREENHEIGHT)
+    {
+	I_Error ("R_DrawFuzzColumn: %i to %i at %i",
+		 dc_yl, dc_yh, dc_x);
+    }
+#endif
+
+    // Blocky mode duplicates each logical column to two framebuffer columns.
+    dc_x <<= 1;
+
+    dest = ylookup[dc_yl] + columnofs[dc_x];
+    dest2 = ylookup[dc_yl] + columnofs[dc_x+1];
+
+    // Keep frac stepping identical to full-detail fuzz behavior.
+    fracstep = dc_iscale;
+    frac = dc_texturemid + (dc_yl-centery)*fracstep;
+
+    do
+    {
+	fuzzed = colormaps[6*256+dest[fuzzoffset[fuzzpos]]];
+	*dest = fuzzed;
+	*dest2 = fuzzed;
+
+	if (++fuzzpos == FUZZTABLE)
+	    fuzzpos = 0;
+
+	dest += SCREENWIDTH;
+	dest2 += SCREENWIDTH;
+
+	frac += fracstep;
+    } while (count--);
+}
  
   
  
@@ -445,6 +500,51 @@ void R_DrawTranslatedColumn (void)
 	frac += fracstep; 
     } while (count--); 
 } 
+
+void R_DrawTranslatedColumnLow (void)
+{
+    int			count;
+    byte*		dest;
+    byte*		dest2;
+    fixed_t		frac;
+    fixed_t		fracstep;
+    byte		translated;
+
+    count = dc_yh - dc_yl;
+    if (count < 0)
+	return;
+
+#ifdef RANGECHECK
+    if ((unsigned)dc_x >= SCREENWIDTH
+	|| dc_yl < 0
+	|| dc_yh >= SCREENHEIGHT)
+    {
+	I_Error ( "R_DrawColumn: %i to %i at %i",
+		  dc_yl, dc_yh, dc_x);
+    }
+#endif
+
+    // Blocky mode duplicates each logical column to two framebuffer columns.
+    dc_x <<= 1;
+
+    dest = ylookup[dc_yl] + columnofs[dc_x];
+    dest2 = ylookup[dc_yl] + columnofs[dc_x+1];
+
+    fracstep = dc_iscale;
+    frac = dc_texturemid + (dc_yl-centery)*fracstep;
+
+    do
+    {
+	translated = dc_colormap[dc_translation[dc_source[frac>>FRACBITS]]];
+	*dest = translated;
+	*dest2 = translated;
+
+	dest += SCREENWIDTH;
+	dest2 += SCREENWIDTH;
+
+	frac += fracstep;
+    } while (count--);
+}
 
 
 
@@ -663,14 +763,16 @@ void R_DrawSpanLow (void)
     xfrac = ds_xfrac; 
     yfrac = ds_yfrac; 
 
-    // Blocky mode, need to multiply by 2.
+    // Span endpoints arrive in logical (viewwidth) coordinates. In blocky mode
+    // each logical column maps to two framebuffer columns, so keep `count` in
+    // logical space and write two screen pixels per iteration. (Original DOOM
+    // 1.10 doubled count along with the endpoints, making every span overdraw
+    // ~2x its width — the dormant bug that caused 3-4P split-screen artifacts
+    // when low detail was forced.)
+    count = ds_x2 - ds_x1;
     ds_x1 <<= 1;
-    ds_x2 <<= 1;
-    
     dest = ylookup[ds_y] + columnofs[ds_x1];
-  
-    
-    count = ds_x2 - ds_x1; 
+
     do 
     { 
 	spot = ((yfrac>>(16-6))&(63*64)) + ((xfrac>>16)&63);
@@ -718,6 +820,38 @@ R_InitBuffer
     for (i=0 ; i<height ; i++) 
 	ylookup[i] = screens[0] + (i+viewwindowy)*SCREENWIDTH; 
 } 
+
+void
+R_SetViewWindow
+( int		x,
+  int		y )
+{
+    int		i;
+
+    if (x < 0)
+	x = 0;
+    if (y < 0)
+	y = 0;
+
+    if (x + scaledviewwidth > SCREENWIDTH)
+	x = SCREENWIDTH - scaledviewwidth;
+    if (y + viewheight > SCREENHEIGHT)
+	y = SCREENHEIGHT - viewheight;
+
+    if (x < 0)
+	x = 0;
+    if (y < 0)
+	y = 0;
+
+    viewwindowx = x;
+    viewwindowy = y;
+
+    for (i=0 ; i<scaledviewwidth ; i++)
+	columnofs[i] = viewwindowx + i;
+
+    for (i=0 ; i<viewheight ; i++)
+	ylookup[i] = screens[0] + (i+viewwindowy)*SCREENWIDTH;
+}
  
  
 

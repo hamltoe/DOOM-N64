@@ -1,0 +1,6 @@
+{
+    "chat.tools.terminal.autoApprove": {
+        "New-Object": true,
+        "ForEach-Object": true
+    }
+}

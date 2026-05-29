@@ -132,6 +132,12 @@ MUSIC_ASSETS_CONV = \
 	$(addprefix $(N64_MKDFS_ROOT)/music/,$(notdir $(MUSIC_ASSETS_YM_LOWER:%.ym=%.ym64))) \
 	$(addprefix $(N64_MKDFS_ROOT)/music/,$(notdir $(MUSIC_ASSETS_YM_UPPER:%.YM=%.ym64)))
 
+MUS_INSTRUMENT_BANK_SRC ?= DOOM_N64_Port_Example/assets/MIDI_Instruments.bin
+ifneq ($(wildcard $(MUS_INSTRUMENT_BANK_SRC)),)
+MUS_INSTRUMENT_BANK_DST := $(N64_MKDFS_ROOT)/music/MIDI_Instruments.bin
+MUS_BANK_ASSET := $(MUS_INSTRUMENT_BANK_DST)
+endif
+
 WAD_ASSETS_LOWER = $(wildcard WADs/*.wad)
 WAD_ASSETS_UPPER = $(wildcard WADs/*.WAD)
 
@@ -142,7 +148,7 @@ WAD_ASSETS_COPY = \
 ROM_NAME = Doom-N64
 
 all: $(ROM_NAME).z64
-.PHONY: all clean prepare-filesystem check-wads
+.PHONY: all clean prepare-filesystem check-wads check-music-assets
 
 $(BUILD_DIR)/$(ROM_NAME).elf: $(OBJS)
 
@@ -158,6 +164,14 @@ check-wads: prepare-filesystem
 	@if [ -z "$(strip $(WAD_ASSETS_LOWER) $(WAD_ASSETS_UPPER))" ]; then \
 		echo "Missing WADs: place one or more .wad/.WAD files in WADs/"; \
 		exit 1; \
+	fi
+
+check-music-assets:
+	@if [ -z "$(strip $(MUSIC_ASSETS_XM_LOWER) $(MUSIC_ASSETS_XM_UPPER) $(MUSIC_ASSETS_YM_LOWER) $(MUSIC_ASSETS_YM_UPPER))" ]; then \
+		echo "    [AUDIO] No assets/music .xm/.ym sources found; MUS fallback path will be used."; \
+	fi
+	@if [ ! -f "$(MUS_INSTRUMENT_BANK_SRC)" ]; then \
+		echo "    [AUDIO] Missing MUS instrument bank ($(MUS_INSTRUMENT_BANK_SRC)); fallback uses synthetic waveforms when samples are unavailable."; \
 	fi
 
 $(N64_MKDFS_ROOT)/%.wad: WADs/%.wad prepare-filesystem
@@ -190,8 +204,14 @@ $(N64_MKDFS_ROOT)/music/%.ym64: assets/music/%.YM prepare-filesystem
 	@echo "    [AUDIO] $@"
 	@$(N64_AUDIOCONV) -o $(N64_MKDFS_ROOT)/music "$<"
 
+$(N64_MKDFS_ROOT)/music/MIDI_Instruments.bin: $(MUS_INSTRUMENT_BANK_SRC) prepare-filesystem
+	@mkdir -p $(dir $@)
+	@echo "    [AUDIO] $< -> $@"
+	@cp "$<" "$@"
+
 $(BUILD_DIR)/doom.dfs: check-wads
-$(BUILD_DIR)/doom.dfs: $(MUSIC_ASSETS_CONV) $(WAD_ASSETS_COPY)
+$(BUILD_DIR)/doom.dfs: check-music-assets
+$(BUILD_DIR)/doom.dfs: $(MUSIC_ASSETS_CONV) $(MUS_BANK_ASSET) $(WAD_ASSETS_COPY)
 
 clean:
 	rm -rf $(BUILD_DIR) *.z64 *.v64

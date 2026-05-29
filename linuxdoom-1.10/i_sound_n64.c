@@ -2,6 +2,7 @@
 
 #include <ctype.h>
 #include <math.h>
+#include <stddef.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -556,29 +557,79 @@ static boolean N64_ResolveMusicTrackAsset(int lumpnum)
 }
 
 // ============================================================
-// MUS soft synthesizer (reads directly from WAD lump data)
+// MUS sampled synthesizer (example-port style interpretation)
 // ============================================================
 
-#define MUS_MAX_CHANNELS  16
-#define MUS_PERC_CHANNEL  15
-#define MUS_TOTAL_VOICE   MUS_MAX_CHANNELS
-#define MUS_PERC_SLOT     MUS_PERC_CHANNEL
-#define MUS_TICK_RATE     140
-#define MUS_PERC_DECAY    1764
+#define MUS_MAX_CHANNELS 16
+#define MUS_MAX_VOICES 16
+#define MUS_PERC_CHANNEL 15
+#define MUS_PERC_INSTRUMENT_BASE 100
+#define MUS_NUM_MIDI_INSTRUMENTS 182
+#define MUS_DEFAULT_CHANNEL_PAN 64
+#define MUS_DEFAULT_CHANNEL_VOLUME 100
+#define MUS_BANK_PATH_MAX N64_MUSIC_PATH_MAX
+#define MUS_TICK_RATE 140
+#define MUS_RELEASE_NUM 7
+#define MUS_RELEASE_SHIFT 3
+#define MUS_PERC_DECAY 1764
 #define MUS_DEBUG_EVENT_LOG_BUDGET 24
-#define MUS_DEBUG_SILENCE_SAMPLES  (N64_AUDIO_FREQUENCY * 2)
+#define MUS_DEBUG_SILENCE_SAMPLES (N64_AUDIO_FREQUENCY * 2)
+
+#define MUS_FALLBACK_NONE 0
+#define MUS_FALLBACK_TRIANGLE 1
+#define MUS_FALLBACK_NOISE 2
 
 typedef struct
 {
+    uint32_t rate;
+    uint32_t loop;
+    uint32_t length;
+    uint16_t base;
+    int8_t sample[8];
+} n64_mus_bank_header_t;
+
+typedef struct
+{
+    int8_t *wave;
+    uint32_t loop;
+    uint32_t length;
+    uint32_t rate;
+    uint16_t base;
+    boolean loaded;
+} n64_mus_instrument_t;
+
+typedef struct
+{
+    int32_t pitch;
+    int32_t lvol;
+    int32_t rvol;
+    int16_t note_voice[128];
+    uint8_t instrument;
+    uint8_t volume;
+    uint8_t pan;
+    uint8_t _pad;
+} n64_mus_channel_t;
+
+typedef struct
+{
+    const int8_t *wave;
+    uint32_t index;
+    uint32_t step;
+    uint32_t loop;
+    uint32_t length;
     uint32_t phase;
     uint32_t phase_inc;
+    uint32_t start_seq;
     int      perc_left;
-    uint8_t  ch_vol;
-    uint8_t  velocity;
+    int32_t  lvol;
+    int32_t  rvol;
+    int16_t  channel;
+    uint8_t  instrument;
     uint8_t  note;
     uint8_t  active;
-    uint8_t  is_perc;
-    uint8_t  _pad[3];
+    uint8_t  releasing;
+    uint8_t  fallback_mode;
+    uint8_t  percussion;
 } mus_voice_t;
 
 typedef struct
@@ -590,9 +641,9 @@ typedef struct
     int32_t        tick_delay;
     int            tick_frac;
     uint32_t       noise_lfsr;
-    mus_voice_t    voices[MUS_TOTAL_VOICE];
-    uint8_t        ch_vol[MUS_MAX_CHANNELS];
-    uint8_t        ch_vel[MUS_MAX_CHANNELS];
+    uint32_t       voice_seq;
+    mus_voice_t    voices[MUS_MAX_VOICES];
+    n64_mus_channel_t channels[MUS_MAX_CHANNELS];
     uint8_t        playing;
     uint8_t        looping;
     uint8_t        eos;
@@ -612,6 +663,576 @@ typedef struct
 } n64_mus_player_t;
 
 static n64_mus_player_t mus_player;
+static n64_mus_instrument_t mus_instruments[MUS_NUM_MIDI_INSTRUMENTS];
+static uint32_t mus_instrument_ptrs[MUS_NUM_MIDI_INSTRUMENTS];
+static char mus_bank_path[MUS_BANK_PATH_MAX];
+static boolean mus_bank_loaded;
+
+static uint16_t N64_BSwap16(uint16_t value)
+{
+    return (uint16_t)((value >> 8) | (value << 8));
+}
+
+static uint32_t N64_BSwap32(uint32_t value)
+{
+    return ((value & 0x000000FFu) << 24)
+         | ((value & 0x0000FF00u) << 8)
+         | ((value & 0x00FF0000u) >> 8)
+         | ((value & 0xFF000000u) >> 24);
+}
+
+static int N64_MusClamp7(int value)
+{
+    if (value < 0)
+        return 0;
+    if (value > 127)
+        return 127;
+    return value;
+}
+
+static void N64_MusRebuildChannelGains(int ch)
+{
+    int pan;
+    int vol;
+
+    pan = mus_player.channels[ch].pan;
+    vol = mus_player.channels[ch].volume;
+
+    mus_player.channels[ch].lvol = (127 - pan) * vol;
+    mus_player.channels[ch].rvol = pan * vol;
+}
+
+static void N64_MusResetChannels(void)
+{
+    int ch;
+
+    for (ch = 0; ch < MUS_MAX_CHANNELS; ch++)
+    {
+        memset(mus_player.channels[ch].note_voice,
+               0,
+               sizeof(mus_player.channels[ch].note_voice));
+        mus_player.channels[ch].pitch = 0x10000;
+        mus_player.channels[ch].instrument = 0;
+        mus_player.channels[ch].volume = MUS_DEFAULT_CHANNEL_VOLUME;
+        mus_player.channels[ch].pan = MUS_DEFAULT_CHANNEL_PAN;
+        N64_MusRebuildChannelGains(ch);
+    }
+}
+
+static void N64_MusStopVoice(int voice)
+{
+    mus_voice_t *mv;
+    int ch;
+    int note;
+
+    if (voice < 0 || voice >= MUS_MAX_VOICES)
+        return;
+
+    mv = &mus_player.voices[voice];
+    ch = mv->channel;
+    note = mv->note;
+
+    if (ch >= 0 && ch < MUS_MAX_CHANNELS && note >= 0 && note < 128)
+    {
+        if (mus_player.channels[ch].note_voice[note] == (int16_t)(voice + 1))
+            mus_player.channels[ch].note_voice[note] = 0;
+    }
+
+    memset(mv, 0, sizeof(*mv));
+}
+
+static void N64_MusStopAllVoices(void)
+{
+    int i;
+
+    for (i = 0; i < MUS_MAX_VOICES; i++)
+        N64_MusStopVoice(i);
+}
+
+static void N64_MusUnloadInstruments(void)
+{
+    int i;
+
+    for (i = 0; i < MUS_NUM_MIDI_INSTRUMENTS; i++)
+    {
+        if (mus_instruments[i].loaded && mus_instruments[i].wave)
+            free(mus_instruments[i].wave);
+        memset(&mus_instruments[i], 0, sizeof(mus_instruments[i]));
+    }
+}
+
+static boolean N64_MusLoadPointerTable(void)
+{
+    static const char* bank_paths[] = {
+        "rom:/music/MIDI_Instruments.bin",
+        "rom:/MIDI_Instruments.bin"
+    };
+    size_t count;
+    int i;
+    FILE *fp;
+
+    memset(mus_instrument_ptrs, 0, sizeof(mus_instrument_ptrs));
+    mus_bank_loaded = false;
+    mus_bank_path[0] = '\0';
+
+    for (i = 0; i < (int)(sizeof(bank_paths) / sizeof(bank_paths[0])); i++)
+    {
+        fp = fopen(bank_paths[i], "rb");
+        if (!fp)
+            continue;
+
+        count = fread(mus_instrument_ptrs,
+                      sizeof(uint32_t),
+                      MUS_NUM_MIDI_INSTRUMENTS,
+                      fp);
+        fclose(fp);
+
+        if (count == MUS_NUM_MIDI_INSTRUMENTS)
+        {
+            snprintf(mus_bank_path, sizeof(mus_bank_path), "%s", bank_paths[i]);
+            mus_bank_loaded = true;
+            return true;
+        }
+    }
+
+    return false;
+}
+
+static void N64_MusNormalizeBankHeader(n64_mus_bank_header_t *header)
+{
+    uint32_t rate;
+    uint32_t loop;
+    uint32_t length;
+    uint16_t base;
+    uint32_t swapped_length;
+    int sample_len;
+    int swapped_sample_len;
+
+    rate = header->rate;
+    loop = header->loop;
+    length = header->length;
+    base = header->base;
+
+    sample_len = (int)(length >> 16);
+    swapped_length = N64_BSwap32(length);
+    swapped_sample_len = (int)(swapped_length >> 16);
+
+    if ((sample_len <= 0 || sample_len > (1 << 20))
+        && swapped_sample_len > 0
+        && swapped_sample_len <= (1 << 20))
+    {
+        length = swapped_length;
+        loop = N64_BSwap32(loop);
+        rate = N64_BSwap32(rate);
+        base = N64_BSwap16(base);
+        sample_len = swapped_sample_len;
+    }
+
+    if (rate == 0 || rate > 96000)
+        rate = N64_DEFAULT_SFX_RATE;
+
+    if (base > 127)
+    {
+        uint16_t swapped_base = N64_BSwap16(base);
+        base = (swapped_base <= 127) ? swapped_base : 60;
+    }
+
+    if (loop > length)
+        loop = 0;
+
+    if (sample_len <= 0)
+    {
+        length = 0;
+        loop = 0;
+    }
+
+    header->rate = rate;
+    header->loop = loop;
+    header->length = length;
+    header->base = base;
+}
+
+static boolean N64_MusLoadInstrument(int instrument)
+{
+    n64_mus_bank_header_t header;
+    uint32_t offsets[2];
+    n64_mus_instrument_t *inst;
+    int sample_len;
+    int attempt;
+    FILE *fp;
+
+    if (instrument < 0 || instrument >= MUS_NUM_MIDI_INSTRUMENTS)
+        return false;
+
+    inst = &mus_instruments[instrument];
+    if (inst->loaded && inst->wave)
+        return true;
+
+    if (!mus_bank_loaded || !mus_bank_path[0])
+        return false;
+
+    offsets[0] = mus_instrument_ptrs[instrument];
+    offsets[1] = N64_BSwap32(mus_instrument_ptrs[instrument]);
+
+    if (offsets[0] == 0 && offsets[1] == 0)
+        return false;
+
+    fp = fopen(mus_bank_path, "rb");
+    if (!fp)
+        return false;
+
+    for (attempt = 0; attempt < 2; attempt++)
+    {
+        long offset;
+
+        if (offsets[attempt] == 0)
+            continue;
+
+        if (attempt == 1 && offsets[1] == offsets[0])
+            continue;
+
+        offset = (long)offsets[attempt];
+
+        if (fseek(fp, offset, SEEK_SET) != 0)
+            continue;
+
+        if (fread(&header, 1, sizeof(header), fp) != sizeof(header))
+            continue;
+
+        N64_MusNormalizeBankHeader(&header);
+
+        sample_len = (int)(header.length >> 16);
+        if (sample_len <= 0 || sample_len > (1 << 20))
+            continue;
+
+        inst->wave = (int8_t*)malloc((size_t)sample_len);
+        if (!inst->wave)
+            break;
+
+        if (fseek(fp, offset + (long)offsetof(n64_mus_bank_header_t, sample), SEEK_SET) != 0
+            || fread(inst->wave, 1, (size_t)sample_len, fp) != (size_t)sample_len)
+        {
+            free(inst->wave);
+            inst->wave = NULL;
+            continue;
+        }
+
+        inst->loop = header.loop;
+        inst->length = header.length;
+        inst->rate = header.rate;
+        inst->base = header.base;
+        inst->loaded = true;
+        fclose(fp);
+        return true;
+    }
+
+    fclose(fp);
+    return false;
+}
+
+static void N64_MusPrepareInstruments(const uint8_t *mus_data, int total_len, int inst_count)
+{
+    int i;
+
+    N64_MusUnloadInstruments();
+
+    if (!mus_bank_loaded || !mus_data)
+        return;
+
+    if (inst_count < 0)
+        inst_count = 0;
+
+    if (16 + inst_count * 2 > total_len)
+        inst_count = (total_len > 16) ? (total_len - 16) / 2 : 0;
+
+    for (i = 0; i < inst_count; i++)
+    {
+        int instrument;
+
+        instrument = (int)N64_ReadLE16(mus_data + 16 + i * 2);
+        if (instrument < 0 || instrument >= MUS_NUM_MIDI_INSTRUMENTS)
+            continue;
+
+        N64_MusLoadInstrument(instrument);
+    }
+}
+
+static uint32_t N64_MusComputeFallbackPhaseInc(int note, int32_t pitch)
+{
+    double freq;
+    double pitch_scale;
+    double inc;
+
+    freq = 440.0 * pow(2.0, ((double)note - 69.0) / 12.0);
+    pitch_scale = (double)pitch / 65536.0;
+    if (pitch_scale <= 0.0)
+        pitch_scale = 0.01;
+    freq *= pitch_scale;
+
+    inc = freq * (4294967296.0 / (double)N64_AUDIO_FREQUENCY);
+    if (inc < 1.0)
+        inc = 1.0;
+    if (inc > 4294967295.0)
+        inc = 4294967295.0;
+
+    return (uint32_t)inc;
+}
+
+static uint32_t N64_MusComputeSampleStep(const n64_mus_instrument_t *inst,
+                                         int note,
+                                         int32_t pitch,
+                                         boolean percussion)
+{
+    double sample_rate;
+    double ratio;
+    double step;
+
+    if (!inst)
+        return 1;
+
+    sample_rate = inst->rate ? (double)inst->rate : (double)N64_DEFAULT_SFX_RATE;
+    ratio = sample_rate / (double)N64_AUDIO_FREQUENCY;
+
+    if (!percussion)
+        ratio *= pow(2.0, ((double)note - (double)inst->base) / 12.0);
+
+    ratio *= (double)pitch / 65536.0;
+    if (ratio <= 0.0)
+        ratio = 1.0 / 65536.0;
+
+    step = ratio * 65536.0;
+    if (step < 1.0)
+        step = 1.0;
+    if (step > 4294967295.0)
+        step = 4294967295.0;
+
+    return (uint32_t)step;
+}
+
+static void N64_MusRefreshChannelPitch(int ch)
+{
+    int i;
+
+    if (ch < 0 || ch >= MUS_MAX_CHANNELS)
+        return;
+
+    for (i = 0; i < MUS_MAX_VOICES; i++)
+    {
+        mus_voice_t *mv;
+
+        mv = &mus_player.voices[i];
+        if (!mv->active || mv->channel != ch)
+            continue;
+
+        if (mv->wave
+            && mv->instrument < MUS_NUM_MIDI_INSTRUMENTS
+            && mus_instruments[mv->instrument].loaded)
+        {
+            mv->step = N64_MusComputeSampleStep(&mus_instruments[mv->instrument],
+                                                mv->note,
+                                                mus_player.channels[ch].pitch,
+                                                mv->percussion ? true : false);
+        }
+        else if (mv->fallback_mode == MUS_FALLBACK_TRIANGLE)
+        {
+            mv->phase_inc = N64_MusComputeFallbackPhaseInc(mv->note,
+                                                           mus_player.channels[ch].pitch);
+        }
+    }
+}
+
+static void N64_MusApplyChannelGains(int ch)
+{
+    int i;
+
+    if (ch < 0 || ch >= MUS_MAX_CHANNELS)
+        return;
+
+    for (i = 0; i < MUS_MAX_VOICES; i++)
+    {
+        mus_voice_t *mv;
+
+        mv = &mus_player.voices[i];
+        if (!mv->active || mv->channel != ch || mv->releasing)
+            continue;
+
+        mv->lvol = mus_player.channels[ch].lvol;
+        mv->rvol = mus_player.channels[ch].rvol;
+    }
+}
+
+static void N64_MusReleaseVoice(int voice)
+{
+    mus_voice_t *mv;
+    int ch;
+    int note;
+
+    if (voice < 0 || voice >= MUS_MAX_VOICES)
+        return;
+
+    mv = &mus_player.voices[voice];
+    if (!mv->active)
+        return;
+
+    ch = mv->channel;
+    note = mv->note;
+
+    if (ch >= 0 && ch < MUS_MAX_CHANNELS && note >= 0 && note < 128)
+    {
+        if (mus_player.channels[ch].note_voice[note] == (int16_t)(voice + 1))
+            mus_player.channels[ch].note_voice[note] = 0;
+    }
+
+    if (mv->fallback_mode == MUS_FALLBACK_NOISE)
+    {
+        N64_MusStopVoice(voice);
+        return;
+    }
+
+    mv->releasing = 1;
+    mv->loop = 0;
+}
+
+static int N64_MusAllocVoice(void)
+{
+    int i;
+    int releasing = -1;
+    int oldest = -1;
+    uint32_t oldest_seq = UINT32_MAX;
+
+    for (i = 0; i < MUS_MAX_VOICES; i++)
+    {
+        if (!mus_player.voices[i].active)
+            return i;
+
+        if (mus_player.voices[i].releasing && releasing < 0)
+            releasing = i;
+
+        if (mus_player.voices[i].start_seq < oldest_seq)
+        {
+            oldest_seq = mus_player.voices[i].start_seq;
+            oldest = i;
+        }
+    }
+
+    if (releasing >= 0)
+    {
+        N64_MusStopVoice(releasing);
+        return releasing;
+    }
+
+    if (oldest >= 0)
+    {
+        N64_MusStopVoice(oldest);
+        return oldest;
+    }
+
+    return -1;
+}
+
+static void N64_MusPlayNote(int ch, int note, int note_volume)
+{
+    n64_mus_channel_t *channel;
+    mus_voice_t *mv;
+    int voice;
+    int instrument;
+
+    if (ch < 0 || ch >= MUS_MAX_CHANNELS)
+        return;
+
+    note &= 0x7F;
+
+    channel = &mus_player.channels[ch];
+
+    if (note_volume >= 0)
+    {
+        channel->volume = (uint8_t)N64_MusClamp7(note_volume);
+        N64_MusRebuildChannelGains(ch);
+        N64_MusApplyChannelGains(ch);
+    }
+
+    if (channel->note_voice[note] > 0)
+        N64_MusReleaseVoice(channel->note_voice[note] - 1);
+
+    voice = N64_MusAllocVoice();
+    if (voice < 0)
+        return;
+
+    N64_MusStopVoice(voice);
+    mv = &mus_player.voices[voice];
+
+    memset(mv, 0, sizeof(*mv));
+    mv->active = 1;
+    mv->channel = (int16_t)ch;
+    mv->note = (uint8_t)note;
+    mv->lvol = channel->lvol;
+    mv->rvol = channel->rvol;
+    mv->start_seq = ++mus_player.voice_seq;
+
+    if (ch == MUS_PERC_CHANNEL)
+    {
+        instrument = note + MUS_PERC_INSTRUMENT_BASE;
+        mv->percussion = 1;
+    }
+    else
+    {
+        instrument = channel->instrument;
+        mv->percussion = 0;
+    }
+
+    if (instrument >= 0
+        && instrument < MUS_NUM_MIDI_INSTRUMENTS
+        && (mus_instruments[instrument].loaded || N64_MusLoadInstrument(instrument))
+        && mus_instruments[instrument].wave)
+    {
+        mv->instrument = (uint8_t)instrument;
+        mv->wave = mus_instruments[instrument].wave;
+        mv->loop = mus_instruments[instrument].loop;
+        mv->length = mus_instruments[instrument].length;
+        mv->step = N64_MusComputeSampleStep(&mus_instruments[instrument],
+                                            note,
+                                            channel->pitch,
+                                            mv->percussion ? true : false);
+    }
+    else
+    {
+        if (mv->percussion)
+        {
+            mv->fallback_mode = MUS_FALLBACK_NOISE;
+            mv->perc_left = MUS_PERC_DECAY;
+        }
+        else
+        {
+            mv->fallback_mode = MUS_FALLBACK_TRIANGLE;
+            mv->phase_inc = N64_MusComputeFallbackPhaseInc(note, channel->pitch);
+        }
+    }
+
+    channel->note_voice[note] = (int16_t)(voice + 1);
+
+    #if DOOM_N64_DEBUG
+    mus_player.dbg_note_on++;
+    #endif
+}
+
+static void N64_MusReleaseNote(int ch, int note)
+{
+    int voice;
+
+    if (ch < 0 || ch >= MUS_MAX_CHANNELS)
+        return;
+
+    note &= 0x7F;
+
+    voice = mus_player.channels[ch].note_voice[note] - 1;
+    if (voice >= 0 && voice < MUS_MAX_VOICES)
+    {
+        N64_MusReleaseVoice(voice);
+        #if DOOM_N64_DEBUG
+        mus_player.dbg_note_off++;
+        #endif
+    }
+}
 
 static boolean N64_IsMus(const void *data, int len)
 {
@@ -635,9 +1256,9 @@ static boolean N64_MusReadByte(uint8_t *out)
 static void N64_MusProcessBatch(void)
 {
     uint8_t ev, b, ctrl, val, note_byte, note;
-    int last, ch, type, slot;
+    int last, ch, type;
+    int note_volume;
     uint16_t delay;
-    float freq;
 
     #if DOOM_N64_DEBUG
     mus_player.dbg_batches++;
@@ -651,7 +1272,6 @@ static void N64_MusProcessBatch(void)
         last = (ev >> 7) & 1;
         ch   = ev & 0x0F;
         type = (ev >> 4) & 0x07;
-        slot = ch;
         #if DOOM_N64_DEBUG
         mus_player.dbg_events++;
 
@@ -672,43 +1292,32 @@ static void N64_MusProcessBatch(void)
         case 0: /* release note: 1 byte (note) */
             if (!N64_MusReadByte(&note))
                 return;
-            mus_player.voices[slot].active = 0;
-            #if DOOM_N64_DEBUG
-            mus_player.dbg_note_off++;
-            #endif
+            N64_MusReleaseNote(ch, note);
             break;
 
         case 1: /* play note: 1-2 bytes */
             if (!N64_MusReadByte(&note_byte))
                 return;
             note = note_byte & 0x7F;
+            note_volume = -1;
+
             if (note_byte & 0x80)
             {
-                if (!N64_MusReadByte(&mus_player.ch_vel[ch]))
+                if (!N64_MusReadByte(&b))
                     return;
+                note_volume = (int)b;
             }
 
-            freq = 440.0f * powf(2.0f, ((float)note - 69.0f) / 12.0f);
-            mus_player.voices[slot].phase_inc =
-                (uint32_t)(freq * (4294967296.0f / (float)N64_AUDIO_FREQUENCY));
-            mus_player.voices[slot].note     = note;
-            mus_player.voices[slot].ch_vol   = mus_player.ch_vol[ch];
-            mus_player.voices[slot].velocity = mus_player.ch_vel[ch];
-            mus_player.voices[slot].phase    = 0;
-            mus_player.voices[slot].active   = 1;
-            mus_player.voices[slot].is_perc  = (uint8_t)(ch == MUS_PERC_CHANNEL);
-            if (ch == MUS_PERC_CHANNEL)
-                mus_player.voices[slot].perc_left = MUS_PERC_DECAY;
-            #if DOOM_N64_DEBUG
-            mus_player.dbg_note_on++;
+            N64_MusPlayNote(ch, note, note_volume);
 
+            #if DOOM_N64_DEBUG
             if (mus_player.dbg_event_budget > 0)
             {
-                N64_DEBUGF("MUS note on: ch=%d note=%d vel=%d chvol=%d\n",
+                N64_DEBUGF("MUS note on: ch=%d note=%d vol=%d inst=%d\n",
                        ch,
                        note,
-                       mus_player.ch_vel[ch],
-                       mus_player.ch_vol[ch]);
+                       note_volume,
+                       mus_player.channels[ch].instrument);
                 mus_player.dbg_event_budget--;
             }
             #endif
@@ -717,15 +1326,8 @@ static void N64_MusProcessBatch(void)
         case 2: /* pitch wheel: 1 byte */
             if (!N64_MusReadByte(&b))
                 return;
-            if (mus_player.voices[slot].active)
-            {
-                float bend = ((float)(int)b - 128.0f) / 64.0f;
-                float base = 440.0f * powf(2.0f,
-                    ((float)mus_player.voices[slot].note - 69.0f) / 12.0f);
-                freq = base * powf(2.0f, bend / 12.0f);
-                mus_player.voices[slot].phase_inc =
-                    (uint32_t)(freq * (4294967296.0f / (float)N64_AUDIO_FREQUENCY));
-            }
+            mus_player.channels[ch].pitch = ((int32_t)b << 6) - ((int32_t)b << 2) + 58180;
+            N64_MusRefreshChannelPitch(ch);
             break;
 
         case 3: /* system event: 1 byte (ignored) */
@@ -736,20 +1338,36 @@ static void N64_MusProcessBatch(void)
         case 4: /* change controller: 2 bytes */
             if (!N64_MusReadByte(&ctrl) || !N64_MusReadByte(&val))
                 return;
-            if (ctrl == 3) /* volume */
-            {
-                mus_player.ch_vol[ch] = val;
-                if (mus_player.voices[slot].active)
-                    mus_player.voices[slot].ch_vol = val;
 
-                #if DOOM_N64_DEBUG
-                if (mus_player.dbg_event_budget > 0)
-                {
-                    N64_DEBUGF("MUS volume: ch=%d val=%d\n", ch, val);
-                    mus_player.dbg_event_budget--;
-                }
-                #endif
+            if (ctrl == 0)
+            {
+                mus_player.channels[ch].instrument = (uint8_t)N64_MusClamp7((int)val);
+                mus_player.channels[ch].pitch = 0x10000;
+                N64_MusRefreshChannelPitch(ch);
             }
+            else if (ctrl == 3)
+            {
+                mus_player.channels[ch].volume = (uint8_t)N64_MusClamp7((int)val);
+                N64_MusRebuildChannelGains(ch);
+                N64_MusApplyChannelGains(ch);
+            }
+            else if (ctrl == 4)
+            {
+                mus_player.channels[ch].pan = (uint8_t)N64_MusClamp7((int)val);
+                N64_MusRebuildChannelGains(ch);
+                N64_MusApplyChannelGains(ch);
+            }
+
+            #if DOOM_N64_DEBUG
+            if (mus_player.dbg_event_budget > 0)
+            {
+                N64_DEBUGF("MUS ctrl: ch=%d ctrl=%d val=%d\n",
+                       ch,
+                       ctrl,
+                       val);
+                mus_player.dbg_event_budget--;
+            }
+            #endif
             break;
 
         case 6: /* score end */
@@ -794,6 +1412,89 @@ static void N64_MusProcessBatch(void)
     }
 }
 
+static void N64_MusResetPlayback(void)
+{
+    mus_player.score_pos  = 0;
+    mus_player.tick_delay = 0;
+    mus_player.tick_frac  = 0;
+    mus_player.noise_lfsr = 0xDEADBEEFu;
+    mus_player.eos        = 0;
+    mus_player.voice_seq  = 0;
+
+    N64_MusResetChannels();
+    N64_MusStopAllVoices();
+}
+
+static void N64_MusRenderVoice(int voice, int32_t *mix_l, int32_t *mix_r)
+{
+    mus_voice_t *mv;
+    int16_t sample;
+
+    mv = &mus_player.voices[voice];
+    if (!mv->active)
+        return;
+
+    sample = 0;
+
+    if (mv->wave)
+    {
+        for (;;)
+        {
+            if (mv->index < mv->length)
+                break;
+
+            if (mv->loop && !mv->releasing && mv->loop < mv->length)
+                mv->index = mv->loop + (mv->index - mv->length);
+            else
+            {
+                N64_MusStopVoice(voice);
+                return;
+            }
+        }
+
+        sample = (int16_t)((int16_t)mv->wave[mv->index >> 16] << 8);
+        mv->index += mv->step ? mv->step : 1;
+    }
+    else if (mv->fallback_mode == MUS_FALLBACK_NOISE)
+    {
+        if (mv->perc_left <= 0)
+        {
+            N64_MusStopVoice(voice);
+            return;
+        }
+
+        mus_player.noise_lfsr ^= mus_player.noise_lfsr >> 13;
+        mus_player.noise_lfsr ^= mus_player.noise_lfsr << 17;
+        mus_player.noise_lfsr ^= mus_player.noise_lfsr >> 5;
+
+        sample = (int16_t)(mus_player.noise_lfsr >> 16);
+        sample = (int16_t)((int32_t)sample * mv->perc_left / MUS_PERC_DECAY);
+        mv->perc_left--;
+    }
+    else
+    {
+        uint32_t half;
+
+        mv->phase += mv->phase_inc;
+        half = (mv->phase < 0x80000000u)
+             ? (mv->phase * 2u)
+             : ((0xFFFFFFFFu - mv->phase) * 2u);
+        sample = (int16_t)((int32_t)(half >> 16) - 32768);
+    }
+
+    *mix_l += ((int32_t)sample * mv->lvol) >> 15;
+    *mix_r += ((int32_t)sample * mv->rvol) >> 15;
+
+    if (mv->releasing)
+    {
+        mv->lvol = (mv->lvol * MUS_RELEASE_NUM) >> MUS_RELEASE_SHIFT;
+        mv->rvol = (mv->rvol * MUS_RELEASE_NUM) >> MUS_RELEASE_SHIFT;
+
+        if (mv->lvol <= 1 && mv->rvol <= 1)
+            N64_MusStopVoice(voice);
+    }
+}
+
 static void N64_MusWaveRead(void *ctx, samplebuffer_t *sbuf,
                             int wpos, int wlen, bool seeking)
 {
@@ -803,9 +1504,8 @@ static void N64_MusWaveRead(void *ctx, samplebuffer_t *sbuf,
 #if DOOM_N64_DEBUG
     int32_t abs_sum;
 #endif
-    uint32_t half;
-    int16_t wsmp;
-    int32_t vscale;
+    int32_t mix_l;
+    int32_t mix_r;
 
     (void)ctx;
 
@@ -822,14 +1522,7 @@ static void N64_MusWaveRead(void *ctx, samplebuffer_t *sbuf,
     #endif
 
     if (seeking)
-    {
-        mus_player.score_pos  = 0;
-        mus_player.tick_delay = 0;
-        mus_player.tick_frac  = 0;
-        for (v = 0; v < MUS_TOTAL_VOICE; v++)
-            mus_player.voices[v].active = 0;
-        mus_player.eos = 0;
-    }
+        N64_MusResetPlayback();
 
     buf = (int16_t *)samplebuffer_append(sbuf, wlen);
     if (!buf)
@@ -855,11 +1548,7 @@ static void N64_MusWaveRead(void *ctx, samplebuffer_t *sbuf,
                 {
                     if (mus_player.looping)
                     {
-                        mus_player.score_pos  = 0;
-                        mus_player.tick_delay = 0;
-                        mus_player.eos        = 0;
-                        for (v = 0; v < MUS_TOTAL_VOICE; v++)
-                            mus_player.voices[v].active = 0;
+                        N64_MusResetPlayback();
                         N64_MusProcessBatch();
                     }
                     else
@@ -870,50 +1559,26 @@ static void N64_MusWaveRead(void *ctx, samplebuffer_t *sbuf,
             }
         }
 
-        /* synthesize sample: sum all active voices */
-        sum = 0;
-        for (v = 0; v < MUS_TOTAL_VOICE; v++)
-        {
-            if (!mus_player.voices[v].active)
-                continue;
+        mix_l = 0;
+        mix_r = 0;
 
-            mus_player.voices[v].phase += mus_player.voices[v].phase_inc;
+        for (v = 0; v < MUS_MAX_VOICES; v++)
+            N64_MusRenderVoice(v, &mix_l, &mix_r);
 
-            if (mus_player.voices[v].is_perc)
-            {
-                if (mus_player.voices[v].perc_left <= 0)
-                {
-                    mus_player.voices[v].active = 0;
-                    continue;
-                }
-                /* xorshift noise + linear decay envelope */
-                mus_player.noise_lfsr ^= mus_player.noise_lfsr >> 13;
-                mus_player.noise_lfsr ^= mus_player.noise_lfsr << 17;
-                mus_player.noise_lfsr ^= mus_player.noise_lfsr >> 5;
-                wsmp = (int16_t)(mus_player.noise_lfsr >> 16);
-                wsmp = (int16_t)((int32_t)wsmp
-                    * mus_player.voices[v].perc_left / MUS_PERC_DECAY);
-                mus_player.voices[v].perc_left--;
-            }
-            else
-            {
-                /* triangle wave */
-                half = (mus_player.voices[v].phase < 0x80000000u)
-                     ? (mus_player.voices[v].phase * 2u)
-                     : ((0xFFFFFFFFu - mus_player.voices[v].phase) * 2u);
-                wsmp = (int16_t)((int32_t)(half >> 16) - 32768);
-            }
+        if (mix_l > 32767)
+            mix_l = 32767;
+        else if (mix_l < -32768)
+            mix_l = -32768;
 
-            vscale = ((int32_t)mus_player.voices[v].ch_vol
-                    * (int32_t)mus_player.voices[v].velocity) >> 7;
-            sum += ((int32_t)wsmp * vscale) >> 7;
-        }
+        if (mix_r > 32767)
+            mix_r = 32767;
+        else if (mix_r < -32768)
+            mix_r = -32768;
 
-        /* scale down and clamp */
-        sum >>= 3;
-        if (sum >  32767) sum =  32767;
-        else if (sum < -32768) sum = -32768;
-        buf[i] = (int16_t)sum;
+        buf[i * 2]     = (int16_t)mix_l;
+        buf[i * 2 + 1] = (int16_t)mix_r;
+
+        sum = (mix_l + mix_r) / 2;
 
         #if DOOM_N64_DEBUG
         abs_sum = (sum < 0) ? -sum : sum;
@@ -980,13 +1645,12 @@ static boolean N64_MusSetup(const void *data, int len)
     memset(&mus_player, 0, sizeof(mus_player));
     mus_player.score      = d + score_start;
     mus_player.score_len  = score_len;
-    mus_player.score_pos  = 0;
-    mus_player.noise_lfsr = 0xDEADBEEFu;
     #if DOOM_N64_DEBUG
     mus_player.dbg_event_budget = MUS_DEBUG_EVENT_LOG_BUDGET;
     #endif
-    memset(mus_player.ch_vol, 127, sizeof(mus_player.ch_vol));
-    memset(mus_player.ch_vel, 100, sizeof(mus_player.ch_vel));
+
+    N64_MusPrepareInstruments(d, len, inst_count);
+    N64_MusResetPlayback();
 
     N64_DEBUGF("MUS setup: score_start=%d score_len=%d channels=%d secondary=%d instruments=%d\n",
                score_start,
@@ -994,6 +1658,11 @@ static boolean N64_MusSetup(const void *data, int len)
                prim_channels,
                sec_channels,
                inst_count);
+
+    if (mus_bank_loaded)
+        N64_DEBUGF("MUS setup: instrument bank %s\n", mus_bank_path);
+    else
+        N64_DEBUGF("MUS setup: no instrument bank (using waveform fallback)\n");
 
     #if !DOOM_N64_DEBUG
     (void)prim_channels;
@@ -1003,7 +1672,7 @@ static boolean N64_MusSetup(const void *data, int len)
 
     mus_player.wave.name      = "MUS";
     mus_player.wave.bits      = 16;
-    mus_player.wave.channels  = 1;
+    mus_player.wave.channels  = 2;
     mus_player.wave.frequency = (float)N64_AUDIO_FREQUENCY;
     mus_player.wave.len       = WAVEFORM_UNKNOWN_LEN;
     mus_player.wave.loop_len  = 0;
@@ -1102,7 +1771,15 @@ static boolean N64_OpenMusicTrack(void)
     {
         if (!N64_MusSetup(music_track.mus_data, music_track.mus_data_len))
             return false;
-        music_track.channels = 1;
+        music_track.channels = 2;
+
+        if (music_track.channels > music_channel_count)
+        {
+            N64_DEBUGF("I_PlaySong: MUS needs %d channels, only %d reserved\n",
+                   music_track.channels,
+                   music_channel_count);
+            return false;
+        }
     }
     else
     {
@@ -1429,7 +2106,20 @@ void I_InitMusic(void)
         return;
 
     N64_ResetMusicTrack(false);
+    N64_MusStopAllVoices();
+    N64_MusUnloadInstruments();
     xm64_set_extsampledir("rom:/music/samples");
+
+    if (N64_MusLoadPointerTable())
+    {
+        N64_DEBUGF("I_InitMusic: MUS instrument bank loaded from %s\n",
+               mus_bank_path);
+    }
+    else
+    {
+        N64_DEBUGF("I_InitMusic: MUS instrument bank missing; using waveform fallback\n");
+    }
+
     missing_music_warning_printed = false;
     music_initialized = true;
 }
@@ -1440,6 +2130,11 @@ void I_ShutdownMusic(void)
         return;
 
     N64_ResetMusicTrack(true);
+    N64_MusStopAllVoices();
+    N64_MusUnloadInstruments();
+    memset(mus_instrument_ptrs, 0, sizeof(mus_instrument_ptrs));
+    mus_bank_path[0] = '\0';
+    mus_bank_loaded = false;
     music_initialized = false;
 }
 
@@ -1527,7 +2222,7 @@ int I_RegisterSong(void* data)
             music_track.mus_data     = data;
             music_track.mus_data_len = llen;
             music_track.format       = N64_MUSIC_FMT_MUS;
-            N64_DEBUGF("I_RegisterSong: MUS soft-synth -> %s\n",
+            N64_DEBUGF("I_RegisterSong: MUS sampled fallback -> %s\n",
                    music_track.lump_name[0] ? music_track.lump_name : "?");
         }
         else if (!missing_music_warning_printed)

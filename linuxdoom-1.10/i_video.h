@@ -54,6 +54,13 @@ void I_BeginRead (void);
 void I_EndRead (void);
 
 #ifdef N64
+#define N64_DISPLAY_RESOLUTION ((resolution_t){ \
+	.width = 320, \
+	.height = 200, \
+	.aspect_ratio = 4.0f / 3.0f, \
+	.overscan_margin = VI_CRT_MARGIN \
+})
+
 typedef struct n64_local_input_s
 {
 	int joy_x;

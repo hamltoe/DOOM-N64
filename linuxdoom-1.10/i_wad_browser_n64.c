@@ -16,6 +16,7 @@
 #include <libdragon.h>
 
 #include "i_system.h"
+#include "i_video.h"
 #include "i_wad_browser_n64.h"
 #include "n64_debug.h"
 
@@ -23,9 +24,9 @@
 #define N64_WAD_PATH_LEN 256
 #define N64_WAD_NAME_LEN 64
 
-#define N64_WAD_VISIBLE_ROWS 10
+#define N64_WAD_VISIBLE_ROWS 8
 #define N64_WAD_LIST_X 18
-#define N64_WAD_LIST_Y 74
+#define N64_WAD_LIST_Y 62
 #define N64_WAD_LIST_WIDTH 284
 #define N64_WAD_ROW_HEIGHT 12
 
@@ -782,24 +783,24 @@ static void I_InitPalette(void)
 
 static void I_DrawStaticFrame(void)
 {
-    I_FillRect(0, 0, 320, 240, col_bg_dark);
-    I_FillRect(0, 0, 320, 54, col_bg_header);
-    I_FillRect(0, 54, 320, 2, col_border);
+    I_FillRect(0, 0, 320, 200, col_bg_dark);
+    I_FillRect(0, 0, 320, 44, col_bg_header);
+    I_FillRect(0, 44, 320, 2, col_border);
 
-    I_FillRect(10, 62, 300, 142, col_panel);
-    I_FillRect(10, 62, 300, 1, col_border);
-    I_FillRect(10, 203, 300, 1, col_border);
-    I_FillRect(10, 62, 1, 142, col_border);
-    I_FillRect(309, 62, 1, 142, col_border);
+    I_FillRect(10, 50, 300, 112, col_panel);
+    I_FillRect(10, 50, 300, 1, col_border);
+    I_FillRect(10, 161, 300, 1, col_border);
+    I_FillRect(10, 50, 1, 112, col_border);
+    I_FillRect(309, 50, 1, 112, col_border);
 
-    I_DrawTextSafe(18, 9, 152, N64_STYLE_TITLE, "DOOM N64");
-    I_DrawTextSafe(18, 23, 152, N64_STYLE_SUBTITLE, "SELECT WAD");
+    I_DrawTextSafe(18, 7, 152, N64_STYLE_TITLE, "DOOM N64");
+    I_DrawTextSafe(18, 19, 152, N64_STYLE_SUBTITLE, "SELECT WAD");
 
-    I_DrawTextSafe(176, 9, 142, N64_STYLE_HINT, "D-PAD: MOVE");
-    I_DrawTextSafe(176, 18, 142, N64_STYLE_HINT, "C-UP/DOWN: PAGE");
-    I_DrawTextSafe(176, 27, 142, N64_STYLE_HINT, "A/START: SELECT");
-    I_DrawTextSafe(176, 36, 142, N64_STYLE_HINT, "B: QUICK IWAD");
-    I_DrawTextSafe(176, 45, 142, N64_STYLE_HINT, "L/R: PLAYERS");
+    I_DrawTextSafe(176, 3, 142, N64_STYLE_HINT, "D-PAD: MOVE");
+    I_DrawTextSafe(176, 11, 142, N64_STYLE_HINT, "C-UP/DOWN: PAGE");
+    I_DrawTextSafe(176, 19, 142, N64_STYLE_HINT, "A/START: SELECT");
+    I_DrawTextSafe(176, 27, 142, N64_STYLE_HINT, "B: QUICK IWAD");
+    I_DrawTextSafe(176, 35, 142, N64_STYLE_HINT, "L/R: PLAYERS");
 }
 
 static void I_DrawEntryRow(int row, int entry_index, int selected)
@@ -865,14 +866,14 @@ static void I_DrawBrowserFrame(int cursor,
              "PLAYERS: %d/%d",
              n64_selected_player_count,
              connected_count ? connected_count : 1);
-    I_DrawTextSafe(18, 37, 152, N64_STYLE_HINT, player_label);
+    I_DrawTextSafe(18, 33, 152, N64_STYLE_HINT, player_label);
 
     selected_entry = &n64_wad_entries[cursor];
 
     if (reject_notice_ticks > 0)
     {
         I_DrawTextSafe(16,
-                       55,
+                       46,
                        304,
                        N64_STYLE_ERROR,
                        (reject_notice_text && reject_notice_text[0])
@@ -890,12 +891,12 @@ static void I_DrawBrowserFrame(int cursor,
 
     if (page > 0)
     {
-        I_DrawTextSafe(132, 64, 120, N64_STYLE_HINT, "^ MORE ^");
+        I_DrawTextSafe(132, 52, 120, N64_STYLE_HINT, "^ MORE ^");
     }
 
     if ((page + N64_WAD_VISIBLE_ROWS) < n64_wad_count)
     {
-        I_DrawTextSafe(132, 193, 120, N64_STYLE_HINT, "v MORE v");
+        I_DrawTextSafe(132, 152, 120, N64_STYLE_HINT, "v MORE v");
     }
 
     snprintf(footer,
@@ -903,16 +904,16 @@ static void I_DrawBrowserFrame(int cursor,
              "WADS: %d  COMPATIBLE: %d",
              n64_wad_count,
              n64_wad_compatible_count);
-    I_DrawTextSafe(16, 210, 304, N64_STYLE_HINT, footer);
+    I_DrawTextSafe(16, 170, 304, N64_STYLE_HINT, footer);
 
     if (selected_entry->compat == N64_WAD_COMPAT_OK)
     {
-        I_DrawTextSafe(16, 221, 304, N64_STYLE_TEXT, selected_entry->path);
+        I_DrawTextSafe(16, 182, 304, N64_STYLE_TEXT, selected_entry->path);
     }
     else if (selected_entry->compat == N64_WAD_COMPAT_NOT_IWAD)
     {
         I_DrawTextSafe(16,
-                       221,
+                       182,
                        304,
                        N64_STYLE_HINT,
                        I_CompatMessage(selected_entry->compat));
@@ -920,7 +921,7 @@ static void I_DrawBrowserFrame(int cursor,
     else
     {
         I_DrawTextSafe(16,
-                       221,
+                       182,
                        304,
                        N64_STYLE_ERROR,
                        I_CompatMessage(selected_entry->compat));
@@ -931,14 +932,14 @@ static void I_DrawFallbackFrame(void)
 {
     I_DrawStaticFrame();
 
-    I_DrawTextSafe(18, 86, 280, N64_STYLE_TEXT, "NO .WAD FILES FOUND IN ROM FS");
-    I_DrawTextSafe(18, 104, 280, N64_STYLE_HINT, "ADD IWADS UNDER filesystem/");
-    I_DrawTextSafe(18, 114, 280, N64_STYLE_HINT, "AND REBUILD ROM IMAGE");
+    I_DrawTextSafe(18, 70, 280, N64_STYLE_TEXT, "NO .WAD FILES FOUND IN ROM FS");
+    I_DrawTextSafe(18, 84, 280, N64_STYLE_HINT, "ADD IWADS UNDER filesystem/");
+    I_DrawTextSafe(18, 94, 280, N64_STYLE_HINT, "AND REBUILD ROM IMAGE");
 
-    I_DrawTextSafe(18, 136, 280, N64_STYLE_TEXT, "PRESS A OR START TO CONTINUE");
-    I_DrawTextSafe(18, 148, 280, N64_STYLE_HINT, "FALLBACK: rom:/doom.wad");
+    I_DrawTextSafe(18, 112, 280, N64_STYLE_TEXT, "PRESS A OR START TO CONTINUE");
+    I_DrawTextSafe(18, 124, 280, N64_STYLE_HINT, "FALLBACK: rom:/doom.wad");
 
-    I_DrawTextSafe(16, 221, 304, N64_STYLE_HINT, "B ALSO CONTINUES WITH FALLBACK");
+    I_DrawTextSafe(16, 182, 304, N64_STYLE_HINT, "B ALSO CONTINUES WITH FALLBACK");
 }
 
 static void I_ClampCursorAndPageForCount(int* cursor, int* page, int count)
@@ -1542,7 +1543,7 @@ void I_N64RunWadBrowser(void)
     if (existing_buffers == 0)
     {
         N64_DEBUGF("WAD browser: calling display_init (fresh)\n");
-        display_init(RESOLUTION_320x240, DEPTH_16_BPP, 3, GAMMA_NONE, FILTERS_RESAMPLE);
+        display_init(N64_DISPLAY_RESOLUTION, DEPTH_16_BPP, 3, GAMMA_NONE, FILTERS_RESAMPLE);
     }
     else
     {

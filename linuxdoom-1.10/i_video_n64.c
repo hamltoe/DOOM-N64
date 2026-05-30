@@ -584,7 +584,7 @@ void I_FinishUpdate(void)
     rdpq_set_mode_copy(false);
     rdpq_mode_tlut(TLUT_RGBA16);
     rdpq_tex_upload_tlut(doom_tlut, 0, 256);
-    rdpq_tex_blit(&doom_screen8, 0, 20, NULL);
+    rdpq_tex_blit(&doom_screen8, 0, 0, NULL);
     rdpq_detach_show();
 
     if (menuactive && gamestate == GS_LEVEL)
@@ -634,7 +634,7 @@ void I_InitGraphics(void)
     else
     {
         N64_DEBUGF("I_InitGraphics: calling display_init (fresh)\n");
-        display_init(RESOLUTION_320x240, DEPTH_16_BPP, 3, GAMMA_NONE, FILTERS_RESAMPLE);
+        display_init(N64_DISPLAY_RESOLUTION, DEPTH_16_BPP, 3, GAMMA_NONE, FILTERS_RESAMPLE);
     }
 
     rdpq_init();

@@ -161,21 +161,27 @@ WAD_ASSETS_COPY = \
 	$(addprefix $(N64_MKDFS_ROOT)/,$(notdir $(WAD_ASSETS_UPPER)))
 
 ROM_NAME = Doom-N64
+FS_PREP_STAMP = $(BUILD_DIR)/.filesystem-prepared.stamp
 
 all: $(ROM_NAME).z64
-.PHONY: all clean prepare-filesystem check-wads check-music-assets
+.PHONY: all clean prepare-filesystem check-wads check-music-assets FORCE
+
+FORCE:
 
 $(BUILD_DIR)/$(ROM_NAME).elf: $(OBJS)
 
 $(ROM_NAME).z64: $(BUILD_DIR)/doom.dfs
 
-prepare-filesystem:
-	@echo "    [FS] Resetting filesystem"
-	@mkdir -p $(N64_MKDFS_ROOT)
-	@find $(N64_MKDFS_ROOT) -mindepth 1 -delete
-	@mkdir -p $(N64_MKDFS_ROOT)/music
+prepare-filesystem: $(FS_PREP_STAMP)
 
-check-wads: prepare-filesystem
+$(FS_PREP_STAMP): FORCE
+	@echo "    [FS] Resetting filesystem"
+	@rm -rf $(N64_MKDFS_ROOT)
+	@mkdir -p $(N64_MKDFS_ROOT)/music
+	@mkdir -p $(BUILD_DIR)
+	@touch $@
+
+check-wads: $(FS_PREP_STAMP)
 	@if [ -z "$(strip $(WAD_ASSETS_LOWER) $(WAD_ASSETS_UPPER))" ]; then \
 		echo "Missing WADs: place one or more .wad/.WAD files in WADs/"; \
 		exit 1; \
@@ -192,32 +198,32 @@ check-music-assets:
 		echo "    [AUDIO] Missing Tier1 converter source ($(MUS_BANK_TOOL_SRC)); auto-falling back to legacy MUS bank staging."; \
 	fi
 
-$(N64_MKDFS_ROOT)/%.wad: WADs/%.wad prepare-filesystem
+$(N64_MKDFS_ROOT)/%.wad: WADs/%.wad | $(FS_PREP_STAMP)
 	@mkdir -p $(dir $@)
 	@echo "    [WAD] $< -> $@"
 	@cp "$<" "$@"
 
-$(N64_MKDFS_ROOT)/%.WAD: WADs/%.WAD prepare-filesystem
+$(N64_MKDFS_ROOT)/%.WAD: WADs/%.WAD | $(FS_PREP_STAMP)
 	@mkdir -p $(dir $@)
 	@echo "    [WAD] $< -> $@"
 	@cp "$<" "$@"
 
-$(N64_MKDFS_ROOT)/music/%.xm64: assets/music/%.xm prepare-filesystem
+$(N64_MKDFS_ROOT)/music/%.xm64: assets/music/%.xm | $(FS_PREP_STAMP)
 	@mkdir -p $(dir $@)
 	@echo "    [AUDIO] $@"
 	@$(N64_AUDIOCONV) -o $(N64_MKDFS_ROOT)/music "$<"
 
-$(N64_MKDFS_ROOT)/music/%.xm64: assets/music/%.XM prepare-filesystem
+$(N64_MKDFS_ROOT)/music/%.xm64: assets/music/%.XM | $(FS_PREP_STAMP)
 	@mkdir -p $(dir $@)
 	@echo "    [AUDIO] $@"
 	@$(N64_AUDIOCONV) -o $(N64_MKDFS_ROOT)/music "$<"
 
-$(N64_MKDFS_ROOT)/music/%.ym64: assets/music/%.ym prepare-filesystem
+$(N64_MKDFS_ROOT)/music/%.ym64: assets/music/%.ym | $(FS_PREP_STAMP)
 	@mkdir -p $(dir $@)
 	@echo "    [AUDIO] $@"
 	@$(N64_AUDIOCONV) -o $(N64_MKDFS_ROOT)/music "$<"
 
-$(N64_MKDFS_ROOT)/music/%.ym64: assets/music/%.YM prepare-filesystem
+$(N64_MKDFS_ROOT)/music/%.ym64: assets/music/%.YM | $(FS_PREP_STAMP)
 	@mkdir -p $(dir $@)
 	@echo "    [AUDIO] $@"
 	@$(N64_AUDIOCONV) -o $(N64_MKDFS_ROOT)/music "$<"
@@ -232,11 +238,12 @@ $(MUS_INSTRUMENT_BANK_TIER1): $(MUS_INSTRUMENT_BANK_SRC) $(MUS_BANK_TOOL_BIN)
 	@echo "    [AUDIO] Tier1 MUS bank $@"
 	@"$(MUS_BANK_TOOL_BIN)" "$<" "$@"
 
-$(N64_MKDFS_ROOT)/music/MIDI_Instruments.bin: $(MUS_INSTRUMENT_BANK_STAGE_SRC) prepare-filesystem
+$(N64_MKDFS_ROOT)/music/MIDI_Instruments.bin: $(MUS_INSTRUMENT_BANK_STAGE_SRC) | $(FS_PREP_STAMP)
 	@mkdir -p $(dir $@)
 	@echo "    [AUDIO] MUS bank ($(MUS_BANK_PROFILE_EFFECTIVE)) $< -> $@"
 	@cp "$<" "$@"
 
+$(BUILD_DIR)/doom.dfs: $(FS_PREP_STAMP)
 $(BUILD_DIR)/doom.dfs: check-wads
 $(BUILD_DIR)/doom.dfs: check-music-assets
 $(BUILD_DIR)/doom.dfs: $(MUSIC_ASSETS_CONV) $(MUS_BANK_ASSET) $(WAD_ASSETS_COPY)

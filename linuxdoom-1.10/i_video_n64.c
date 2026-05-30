@@ -300,32 +300,31 @@ static void I_UpdateLocalWeaponInput(int playernum,
 {
     int key;
 
+    if (playernum == 0 && menuactive)
+    {
+        state->weapon_key = 0;
+        n64_local_weapon_cycle_down[playernum] = false;
+        n64_local_weapon_prev_down[playernum] = false;
+        n64_local_weapon_next_down[playernum] = false;
+        return;
+    }
+
     key = 0;
 
-    if (buttons.d_down && !n64_local_weapon_cycle_down[playernum])
-    {
-        key = I_GetNextSelectableWeaponKeyForPlayer(playernum, &n64_local_next_weapon_cycle_key[playernum]);
-        if (key)
-        {
-            n64_local_next_weapon_cycle_key[playernum] = key + 1;
-            if (n64_local_next_weapon_cycle_key[playernum] > '7')
-                n64_local_next_weapon_cycle_key[playernum] = '1';
-        }
-    }
-    else if (buttons.d_left && !n64_local_weapon_prev_down[playernum])
+    if (buttons.a && !n64_local_weapon_prev_down[playernum])
     {
         key = I_GetDirectionalWeaponKeyForPlayer(playernum, false);
     }
-    else if (buttons.d_right && !n64_local_weapon_next_down[playernum])
+    else if (buttons.b && !n64_local_weapon_next_down[playernum])
     {
         key = I_GetDirectionalWeaponKeyForPlayer(playernum, true);
     }
 
     state->weapon_key = key;
 
-    n64_local_weapon_cycle_down[playernum] = buttons.d_down;
-    n64_local_weapon_prev_down[playernum] = buttons.d_left;
-    n64_local_weapon_next_down[playernum] = buttons.d_right;
+    n64_local_weapon_cycle_down[playernum] = false;
+    n64_local_weapon_prev_down[playernum] = buttons.a;
+    n64_local_weapon_next_down[playernum] = buttons.b;
 }
 
 static void I_UpdateLocalPlayerInput(int playernum, joypad_port_t port)
@@ -351,6 +350,16 @@ static void I_UpdateLocalPlayerInput(int playernum, joypad_port_t port)
     state->joy_x = I_NormalizeStickAxis(inputs.stick_x);
     state->joy_y = -I_NormalizeStickAxis(inputs.stick_y);
 
+    if (buttons.d_left)
+        state->joy_x = -STICK_ANALOG_MAX;
+    else if (buttons.d_right)
+        state->joy_x = STICK_ANALOG_MAX;
+
+    if (buttons.d_up)
+        state->joy_y = -STICK_ANALOG_MAX;
+    else if (buttons.d_down)
+        state->joy_y = STICK_ANALOG_MAX;
+
     if (playernum == 0 && menuactive)
     {
         state->joy_x = 0;
@@ -359,7 +368,7 @@ static void I_UpdateLocalPlayerInput(int playernum, joypad_port_t port)
 
     state->strafe_left = buttons.c_left;
     state->strafe_right = buttons.c_right;
-    state->speed = buttons.c_up;
+    state->speed = buttons.r;
 
     if (playernum == 0 && menuactive)
     {
@@ -368,8 +377,8 @@ static void I_UpdateLocalPlayerInput(int playernum, joypad_port_t port)
     }
     else
     {
-        state->fire = (buttons.a || buttons.z || buttons.r);
-        state->use = (buttons.b || buttons.c_down);
+        state->fire = (buttons.z || buttons.l);
+        state->use = buttons.c_down;
     }
 
     I_UpdateLocalWeaponInput(playernum, buttons, state);
@@ -497,6 +506,16 @@ void I_StartTic(void)
     stick_x = I_NormalizeStickAxis(inputs.stick_x);
     stick_y = I_NormalizeStickAxis(inputs.stick_y);
 
+    if (buttons.d_left)
+        stick_x = -STICK_ANALOG_MAX;
+    else if (buttons.d_right)
+        stick_x = STICK_ANALOG_MAX;
+
+    if (buttons.d_up)
+        stick_y = STICK_ANALOG_MAX;
+    else if (buttons.d_down)
+        stick_y = -STICK_ANALOG_MAX;
+
     if (menuactive)
     {
         joy_x = I_MenuAxisStep(stick_x);
@@ -510,24 +529,24 @@ void I_StartTic(void)
 
     I_PostJoystickEvent(0, joy_x, joy_y);
 
-    I_UpdateKeyState(buttons.d_up, KEYIDX_PAUSE, KEY_PAUSE);
-    I_UpdateWeaponCycle(buttons.d_down);
-    I_UpdateWeaponSelect(buttons.d_left, false, &weapon_prev_down, &weapon_prev_key);
-    I_UpdateWeaponSelect(buttons.d_right, true, &weapon_next_down, &weapon_next_key);
+    I_UpdateKeyState(false, KEYIDX_PAUSE, KEY_PAUSE);
+    I_UpdateWeaponCycle(false);
+    I_UpdateWeaponSelect((buttons.a && !menuactive), false, &weapon_prev_down, &weapon_prev_key);
+    I_UpdateWeaponSelect((buttons.b && !menuactive), true, &weapon_next_down, &weapon_next_key);
 
     I_UpdateKeyState(buttons.start, KEYIDX_MENU, KEY_ESCAPE);
-    I_UpdateKeyState(buttons.l, KEYIDX_MAP_TOGGLE, KEY_TAB);
+    I_UpdateKeyState(buttons.c_up, KEYIDX_MAP_TOGGLE, KEY_TAB);
     // Menu buttons should fire on fresh presses to avoid carry-over from held gameplay inputs.
     I_UpdateKeyState((pressed.a && menuactive), KEYIDX_A_MENU_ENTER, KEY_ENTER);
-    I_UpdateKeyState(((buttons.a || buttons.z || buttons.r) && !menuactive), KEYIDX_A_USE, KEY_RCTRL);
+    I_UpdateKeyState((buttons.c_down && !menuactive), KEYIDX_A_USE, ' ');
     I_UpdateKeyState((pressed.b && menuactive), KEYIDX_B_MENU_BACK, KEY_BACKSPACE);
     I_UpdateKeyState((menuactive && (pressed.c_down || pressed.r || pressed.y)), KEYIDX_MENU_CONFIRM_Y, 'y');
     I_UpdateKeyState((menuactive && (pressed.z || pressed.x)), KEYIDX_MENU_CONFIRM_N, 'n');
-    I_UpdateKeyState(((buttons.b || buttons.c_down) && !menuactive), KEYIDX_FIRE, ' ');
+    I_UpdateKeyState(((buttons.z || buttons.l) && !menuactive), KEYIDX_FIRE, KEY_RCTRL);
 
     I_UpdateKeyState(buttons.c_left, KEYIDX_STRAFE_LEFT, ',');
     I_UpdateKeyState(buttons.c_right, KEYIDX_STRAFE_RIGHT, '.');
-    I_UpdateKeyState(buttons.c_up, KEYIDX_SPEED, KEY_RSHIFT);
+    I_UpdateKeyState(buttons.r, KEYIDX_SPEED, KEY_RSHIFT);
 
     for (playernum = 0; playernum < MAXPLAYERS; playernum++)
     {

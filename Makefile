@@ -133,6 +133,21 @@ MUSIC_ASSETS_CONV = \
 	$(addprefix $(N64_MKDFS_ROOT)/music/,$(notdir $(MUSIC_ASSETS_YM_UPPER:%.YM=%.ym64)))
 
 MUS_INSTRUMENT_BANK_SRC ?= DOOM_N64_Port_Example/assets/MIDI_Instruments.bin
+MUS_BANK_PROFILE ?= legacy
+MUS_BANK_TOOL_SRC := tools/mus_bank_tier1.c
+MUS_BANK_TOOL_BIN := $(BUILD_DIR)/host/mus_bank_tier1
+MUS_INSTRUMENT_BANK_TIER1 := $(BUILD_DIR)/music/MIDI_Instruments.tier1.bin
+MUS_INSTRUMENT_BANK_STAGE_SRC := $(MUS_INSTRUMENT_BANK_SRC)
+MUS_BANK_PROFILE_EFFECTIVE := $(MUS_BANK_PROFILE)
+
+ifeq ($(MUS_BANK_PROFILE),tier1)
+ifneq ($(wildcard $(MUS_BANK_TOOL_SRC)),)
+MUS_INSTRUMENT_BANK_STAGE_SRC := $(MUS_INSTRUMENT_BANK_TIER1)
+else
+MUS_BANK_PROFILE_EFFECTIVE := legacy
+endif
+endif
+
 ifneq ($(wildcard $(MUS_INSTRUMENT_BANK_SRC)),)
 MUS_INSTRUMENT_BANK_DST := $(N64_MKDFS_ROOT)/music/MIDI_Instruments.bin
 MUS_BANK_ASSET := $(MUS_INSTRUMENT_BANK_DST)
@@ -173,6 +188,9 @@ check-music-assets:
 	@if [ ! -f "$(MUS_INSTRUMENT_BANK_SRC)" ]; then \
 		echo "    [AUDIO] Missing MUS instrument bank ($(MUS_INSTRUMENT_BANK_SRC)); fallback uses synthetic waveforms when samples are unavailable."; \
 	fi
+	@if [ "$(MUS_BANK_PROFILE)" = "tier1" ] && [ ! -f "$(MUS_BANK_TOOL_SRC)" ]; then \
+		echo "    [AUDIO] Missing Tier1 converter source ($(MUS_BANK_TOOL_SRC)); auto-falling back to legacy MUS bank staging."; \
+	fi
 
 $(N64_MKDFS_ROOT)/%.wad: WADs/%.wad prepare-filesystem
 	@mkdir -p $(dir $@)
@@ -204,9 +222,19 @@ $(N64_MKDFS_ROOT)/music/%.ym64: assets/music/%.YM prepare-filesystem
 	@echo "    [AUDIO] $@"
 	@$(N64_AUDIOCONV) -o $(N64_MKDFS_ROOT)/music "$<"
 
-$(N64_MKDFS_ROOT)/music/MIDI_Instruments.bin: $(MUS_INSTRUMENT_BANK_SRC) prepare-filesystem
+$(MUS_BANK_TOOL_BIN): $(MUS_BANK_TOOL_SRC)
 	@mkdir -p $(dir $@)
-	@echo "    [AUDIO] $< -> $@"
+	@echo "    [HOST] $@"
+	@cc -O2 -std=c11 -Wall -Wextra -o "$@" "$<"
+
+$(MUS_INSTRUMENT_BANK_TIER1): $(MUS_INSTRUMENT_BANK_SRC) $(MUS_BANK_TOOL_BIN)
+	@mkdir -p $(dir $@)
+	@echo "    [AUDIO] Tier1 MUS bank $@"
+	@"$(MUS_BANK_TOOL_BIN)" "$<" "$@"
+
+$(N64_MKDFS_ROOT)/music/MIDI_Instruments.bin: $(MUS_INSTRUMENT_BANK_STAGE_SRC) prepare-filesystem
+	@mkdir -p $(dir $@)
+	@echo "    [AUDIO] MUS bank ($(MUS_BANK_PROFILE_EFFECTIVE)) $< -> $@"
 	@cp "$<" "$@"
 
 $(BUILD_DIR)/doom.dfs: check-wads

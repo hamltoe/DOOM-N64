@@ -574,6 +574,8 @@ static boolean N64_ResolveMusicTrackAsset(int lumpnum)
 #define MUS_PERC_DECAY 1764
 #define MUS_DEBUG_EVENT_LOG_BUDGET 24
 #define MUS_DEBUG_SILENCE_SAMPLES (N64_AUDIO_FREQUENCY * 2)
+#define MUS_BANK_V2_MAGIC 0x3253554Du
+#define MUS_BANK_FLAG_ADPCM_IMA4 0x0001u
 
 #define MUS_FALLBACK_NONE 0
 #define MUS_FALLBACK_TRIANGLE 1
@@ -590,11 +592,37 @@ typedef struct
 
 typedef struct
 {
+    uint32_t rate;
+    uint32_t loop;
+    uint32_t length;
+    uint16_t base;
+    uint16_t flags;
+    uint32_t payload_len;
+    int16_t adpcm_init_predictor;
+    uint8_t adpcm_init_step_index;
+    int16_t adpcm_loop_predictor;
+    uint8_t adpcm_loop_step_index;
+} n64_mus_bank_header_v2_t;
+
+typedef enum
+{
+    N64_MUS_SAMPLE_PCM8 = 0,
+    N64_MUS_SAMPLE_ADPCM_IMA4 = 1
+} n64_mus_sample_encoding_t;
+
+typedef struct
+{
     int8_t *wave;
     uint32_t loop;
     uint32_t length;
     uint32_t rate;
     uint16_t base;
+    uint32_t data_len;
+    uint8_t encoding;
+    int16_t adpcm_init_predictor;
+    uint8_t adpcm_init_step_index;
+    int16_t adpcm_loop_predictor;
+    uint8_t adpcm_loop_step_index;
     boolean loaded;
 } n64_mus_instrument_t;
 
@@ -630,6 +658,12 @@ typedef struct
     uint8_t  releasing;
     uint8_t  fallback_mode;
     uint8_t  percussion;
+    uint8_t  adpcm_active;
+    uint8_t  adpcm_step_index;
+    uint16_t _pad2;
+    uint32_t adpcm_sample_index;
+    uint32_t adpcm_nibble_index;
+    int16_t  adpcm_predictor;
 } mus_voice_t;
 
 typedef struct
@@ -679,6 +713,302 @@ static uint32_t N64_BSwap32(uint32_t value)
          | ((value & 0x0000FF00u) << 8)
          | ((value & 0x00FF0000u) >> 8)
          | ((value & 0xFF000000u) >> 24);
+}
+
+static const int8_t mus_adpcm_index_table[16] = {
+    -1, -1, -1, -1,
+     2,  4,  6,  8,
+    -1, -1, -1, -1,
+     2,  4,  6,  8
+};
+
+static const int16_t mus_adpcm_step_table[89] = {
+       7,    8,    9,   10,   11,   12,   13,   14,
+      16,   17,   19,   21,   23,   25,   28,   31,
+      34,   37,   41,   45,   50,   55,   60,   66,
+      73,   80,   88,   97,  107,  118,  130,  143,
+     157,  173,  190,  209,  230,  253,  279,  307,
+     337,  371,  408,  449,  494,  544,  598,  658,
+     724,  796,  876,  963, 1060, 1166, 1282, 1411,
+    1552, 1707, 1878, 2066, 2272, 2499, 2749, 3024,
+    3327, 3660, 4026, 4428, 4871, 5358, 5894, 6484,
+    7132, 7845, 8630, 9493,10442,11487,12635,13899,
+   15289,16818,18500,20350,22385,24623,27086,29794,
+   32767
+};
+
+static uint16_t N64_ReadBE16(const uint8_t *p)
+{
+    return (uint16_t)(((uint16_t)p[0] << 8) | (uint16_t)p[1]);
+}
+
+static uint32_t N64_ReadBE32(const uint8_t *p)
+{
+    return ((uint32_t)p[0] << 24)
+         | ((uint32_t)p[1] << 16)
+         | ((uint32_t)p[2] << 8)
+         | (uint32_t)p[3];
+}
+
+static int N64_MusSampleCountFromLength(uint32_t length)
+{
+    return (int)(length >> 16);
+}
+
+static boolean N64_MusHeaderCandidateValid(uint32_t rate,
+                                           uint32_t loop,
+                                           uint32_t length,
+                                           uint16_t base)
+{
+    int sample_len;
+
+    sample_len = N64_MusSampleCountFromLength(length);
+    if (sample_len <= 0 || sample_len > (1 << 20))
+        return false;
+
+    if (rate == 0 || rate > 96000)
+        return false;
+
+    if (loop > length)
+        return false;
+
+    if (base > 127)
+        return false;
+
+    return true;
+}
+
+static boolean N64_MusParseBankHeaderV2(const uint8_t *raw,
+                                        n64_mus_bank_header_v2_t *out)
+{
+    uint32_t magic;
+    uint32_t rate;
+    uint32_t loop;
+    uint32_t length;
+    uint16_t base;
+    uint16_t flags;
+    uint32_t payload_len;
+    int16_t init_predictor;
+    uint8_t init_step;
+    int16_t loop_predictor;
+    uint8_t loop_step;
+    int sample_len;
+    uint32_t min_payload;
+
+    if (!raw || !out)
+        return false;
+
+    magic = N64_ReadLE32(raw + 0);
+    if (magic == MUS_BANK_V2_MAGIC)
+    {
+        rate = N64_ReadLE32(raw + 4);
+        loop = N64_ReadLE32(raw + 8);
+        length = N64_ReadLE32(raw + 12);
+        base = N64_ReadLE16(raw + 16);
+        flags = N64_ReadLE16(raw + 18);
+        payload_len = N64_ReadLE32(raw + 20);
+        init_predictor = (int16_t)N64_ReadLE16(raw + 24);
+        init_step = raw[26];
+        loop_predictor = (int16_t)N64_ReadLE16(raw + 28);
+        loop_step = raw[30];
+    }
+    else if (N64_ReadBE32(raw + 0) == MUS_BANK_V2_MAGIC)
+    {
+        rate = N64_ReadBE32(raw + 4);
+        loop = N64_ReadBE32(raw + 8);
+        length = N64_ReadBE32(raw + 12);
+        base = N64_ReadBE16(raw + 16);
+        flags = N64_ReadBE16(raw + 18);
+        payload_len = N64_ReadBE32(raw + 20);
+        init_predictor = (int16_t)N64_ReadBE16(raw + 24);
+        init_step = raw[27];
+        loop_predictor = (int16_t)N64_ReadBE16(raw + 28);
+        loop_step = raw[31];
+    }
+    else
+    {
+        return false;
+    }
+
+    if (!N64_MusHeaderCandidateValid(rate, loop, length, base))
+        return false;
+
+    sample_len = N64_MusSampleCountFromLength(length);
+    min_payload = (sample_len > 1) ? (uint32_t)((sample_len - 1 + 1) / 2) : 0;
+
+    if ((flags & MUS_BANK_FLAG_ADPCM_IMA4) && payload_len < min_payload)
+        return false;
+
+    if (payload_len > (1u << 20))
+        return false;
+
+    out->rate = rate;
+    out->loop = loop;
+    out->length = length;
+    out->base = base;
+    out->flags = flags;
+    out->payload_len = payload_len;
+    out->adpcm_init_predictor = init_predictor;
+    out->adpcm_init_step_index = init_step;
+    out->adpcm_loop_predictor = loop_predictor;
+    out->adpcm_loop_step_index = loop_step;
+    return true;
+}
+
+static uint8_t N64_MusClampAdpcmStepIndex(int index)
+{
+    if (index < 0)
+        return 0;
+    if (index > 88)
+        return 88;
+    return (uint8_t)index;
+}
+
+static int16_t N64_MusDecodeAdpcmNibble(int16_t predictor,
+                                        uint8_t *step_index,
+                                        uint8_t nibble)
+{
+    int step;
+    int diffq;
+    int next_index;
+    int value;
+
+    if (!step_index)
+        return predictor;
+
+    step = mus_adpcm_step_table[*step_index];
+    diffq = step >> 3;
+
+    if (nibble & 1)
+        diffq += step >> 2;
+    if (nibble & 2)
+        diffq += step >> 1;
+    if (nibble & 4)
+        diffq += step;
+
+    value = predictor;
+    if (nibble & 8)
+        value -= diffq;
+    else
+        value += diffq;
+
+    if (value < -32768)
+        value = -32768;
+    else if (value > 32767)
+        value = 32767;
+
+    next_index = (int)*step_index + mus_adpcm_index_table[nibble & 0x0F];
+    *step_index = N64_MusClampAdpcmStepIndex(next_index);
+
+    return (int16_t)value;
+}
+
+static uint8_t N64_MusReadAdpcmNibble(const n64_mus_instrument_t *inst,
+                                      uint32_t nibble_index)
+{
+    uint32_t byte_index;
+    uint8_t packed;
+
+    if (!inst || !inst->wave)
+        return 0;
+
+    byte_index = nibble_index >> 1;
+    if (byte_index >= inst->data_len)
+        return 0;
+
+    packed = (uint8_t)inst->wave[byte_index];
+    if (nibble_index & 1u)
+        return (uint8_t)((packed >> 4) & 0x0F);
+
+    return (uint8_t)(packed & 0x0F);
+}
+
+static void N64_MusVoiceResetAdpcmStart(mus_voice_t *mv,
+                                        const n64_mus_instrument_t *inst)
+{
+    if (!mv || !inst)
+        return;
+
+    mv->adpcm_active = 1;
+    mv->adpcm_predictor = inst->adpcm_init_predictor;
+    mv->adpcm_step_index = N64_MusClampAdpcmStepIndex(inst->adpcm_init_step_index);
+    mv->adpcm_sample_index = 0;
+    mv->adpcm_nibble_index = 0;
+}
+
+static void N64_MusVoiceResetAdpcmLoop(mus_voice_t *mv,
+                                       const n64_mus_instrument_t *inst)
+{
+    uint32_t loop_sample;
+    uint32_t sample_count;
+
+    if (!mv || !inst)
+        return;
+
+    sample_count = (uint32_t)N64_MusSampleCountFromLength(inst->length);
+    loop_sample = (uint32_t)(inst->loop >> 16);
+
+    if (loop_sample == 0 || loop_sample >= sample_count)
+    {
+        N64_MusVoiceResetAdpcmStart(mv, inst);
+        return;
+    }
+
+    mv->adpcm_active = 1;
+    mv->adpcm_predictor = inst->adpcm_loop_predictor;
+    mv->adpcm_step_index = N64_MusClampAdpcmStepIndex(inst->adpcm_loop_step_index);
+    mv->adpcm_sample_index = loop_sample;
+    mv->adpcm_nibble_index = loop_sample;
+}
+
+static int16_t N64_MusVoiceDecodeAdpcmSample(mus_voice_t *mv,
+                                             const n64_mus_instrument_t *inst,
+                                             uint32_t target_sample,
+                                             boolean wrapped)
+{
+    uint32_t sample_count;
+    uint32_t total_nibbles;
+
+    if (!mv || !inst)
+        return 0;
+
+    sample_count = (uint32_t)N64_MusSampleCountFromLength(inst->length);
+    if (sample_count == 0)
+        return 0;
+
+    if (target_sample >= sample_count)
+        target_sample = sample_count - 1;
+
+    if (!mv->adpcm_active)
+        N64_MusVoiceResetAdpcmStart(mv, inst);
+
+    if (wrapped)
+        N64_MusVoiceResetAdpcmLoop(mv, inst);
+
+    if (target_sample < mv->adpcm_sample_index)
+    {
+        if (inst->loop && target_sample >= (uint32_t)(inst->loop >> 16))
+            N64_MusVoiceResetAdpcmLoop(mv, inst);
+        else
+            N64_MusVoiceResetAdpcmStart(mv, inst);
+    }
+
+    total_nibbles = (sample_count > 1) ? sample_count - 1 : 0;
+
+    while (mv->adpcm_sample_index < target_sample
+        && mv->adpcm_nibble_index < total_nibbles)
+    {
+        uint8_t nibble;
+
+        nibble = N64_MusReadAdpcmNibble(inst, mv->adpcm_nibble_index);
+        mv->adpcm_predictor = N64_MusDecodeAdpcmNibble(mv->adpcm_predictor,
+                                                       &mv->adpcm_step_index,
+                                                       nibble);
+        mv->adpcm_nibble_index++;
+        mv->adpcm_sample_index++;
+    }
+
+    return mv->adpcm_predictor;
 }
 
 static int N64_MusClamp7(int value)
@@ -855,8 +1185,12 @@ static void N64_MusNormalizeBankHeader(n64_mus_bank_header_t *header)
 static boolean N64_MusLoadInstrument(int instrument)
 {
     n64_mus_bank_header_t header;
+    n64_mus_bank_header_v2_t header_v2;
+    uint8_t header_v2_raw[32];
     uint32_t offsets[2];
     n64_mus_instrument_t *inst;
+    uint32_t data_len;
+    size_t alloc_len;
     int sample_len;
     int attempt;
     FILE *fp;
@@ -896,6 +1230,53 @@ static boolean N64_MusLoadInstrument(int instrument)
         if (fseek(fp, offset, SEEK_SET) != 0)
             continue;
 
+        if (fread(header_v2_raw, 1, sizeof(header_v2_raw), fp) == sizeof(header_v2_raw)
+            && N64_MusParseBankHeaderV2(header_v2_raw, &header_v2))
+        {
+            data_len = header_v2.payload_len;
+            alloc_len = data_len ? (size_t)data_len : 1u;
+
+            inst->wave = (int8_t*)malloc(alloc_len);
+            if (!inst->wave)
+                break;
+
+            if (data_len > 0)
+            {
+                if (fseek(fp, offset + (long)sizeof(header_v2_raw), SEEK_SET) != 0
+                    || fread(inst->wave, 1, (size_t)data_len, fp) != (size_t)data_len)
+                {
+                    free(inst->wave);
+                    inst->wave = NULL;
+                    continue;
+                }
+            }
+            else
+            {
+                inst->wave[0] = 0;
+            }
+
+            inst->loop = header_v2.loop;
+            inst->length = header_v2.length;
+            inst->rate = header_v2.rate;
+            inst->base = header_v2.base;
+            inst->data_len = data_len;
+            inst->encoding = (header_v2.flags & MUS_BANK_FLAG_ADPCM_IMA4)
+                ? N64_MUS_SAMPLE_ADPCM_IMA4
+                : N64_MUS_SAMPLE_PCM8;
+            inst->adpcm_init_predictor = header_v2.adpcm_init_predictor;
+            inst->adpcm_init_step_index = N64_MusClampAdpcmStepIndex(header_v2.adpcm_init_step_index);
+            inst->adpcm_loop_predictor = header_v2.adpcm_loop_predictor;
+            inst->adpcm_loop_step_index = N64_MusClampAdpcmStepIndex(header_v2.adpcm_loop_step_index);
+            inst->loaded = true;
+            fclose(fp);
+            return true;
+        }
+
+        clearerr(fp);
+
+        if (fseek(fp, offset, SEEK_SET) != 0)
+            continue;
+
         if (fread(&header, 1, sizeof(header), fp) != sizeof(header))
             continue;
 
@@ -921,6 +1302,12 @@ static boolean N64_MusLoadInstrument(int instrument)
         inst->length = header.length;
         inst->rate = header.rate;
         inst->base = header.base;
+        inst->data_len = (uint32_t)sample_len;
+        inst->encoding = N64_MUS_SAMPLE_PCM8;
+        inst->adpcm_init_predictor = (int16_t)((int16_t)inst->wave[0] << 8);
+        inst->adpcm_init_step_index = 0;
+        inst->adpcm_loop_predictor = inst->adpcm_init_predictor;
+        inst->adpcm_loop_step_index = 0;
         inst->loaded = true;
         fclose(fp);
         return true;
@@ -1133,6 +1520,7 @@ static int N64_MusAllocVoice(void)
 static void N64_MusPlayNote(int ch, int note, int note_volume)
 {
     n64_mus_channel_t *channel;
+    n64_mus_instrument_t *inst;
     mus_voice_t *mv;
     int voice;
     int instrument;
@@ -1180,22 +1568,33 @@ static void N64_MusPlayNote(int ch, int note, int note_volume)
         mv->percussion = 0;
     }
 
+    inst = NULL;
     if (instrument >= 0
         && instrument < MUS_NUM_MIDI_INSTRUMENTS
-        && (mus_instruments[instrument].loaded || N64_MusLoadInstrument(instrument))
-        && mus_instruments[instrument].wave)
+        && (mus_instruments[instrument].loaded || N64_MusLoadInstrument(instrument)))
+    {
+        inst = &mus_instruments[instrument];
+    }
+
+    if (inst && inst->wave)
     {
         mv->instrument = (uint8_t)instrument;
-        mv->wave = mus_instruments[instrument].wave;
-        mv->loop = mus_instruments[instrument].loop;
-        mv->length = mus_instruments[instrument].length;
-        mv->step = N64_MusComputeSampleStep(&mus_instruments[instrument],
+        mv->wave = inst->wave;
+        mv->loop = inst->loop;
+        mv->length = inst->length;
+        mv->step = N64_MusComputeSampleStep(inst,
                                             note,
                                             channel->pitch,
                                             mv->percussion ? true : false);
+
+        if (inst->encoding == N64_MUS_SAMPLE_ADPCM_IMA4)
+            N64_MusVoiceResetAdpcmStart(mv, inst);
+        else
+            mv->adpcm_active = 0;
     }
     else
     {
+        mv->adpcm_active = 0;
         if (mv->percussion)
         {
             mv->fallback_mode = MUS_FALLBACK_NOISE;
@@ -1438,13 +1837,23 @@ static void N64_MusRenderVoice(int voice, int32_t *mix_l, int32_t *mix_r)
 
     if (mv->wave)
     {
+        boolean wrapped;
+        uint32_t sample_index;
+        const n64_mus_instrument_t *inst;
+
+        wrapped = false;
+        inst = NULL;
+
         for (;;)
         {
             if (mv->index < mv->length)
                 break;
 
             if (mv->loop && !mv->releasing && mv->loop < mv->length)
+            {
                 mv->index = mv->loop + (mv->index - mv->length);
+                wrapped = true;
+            }
             else
             {
                 N64_MusStopVoice(voice);
@@ -1452,7 +1861,27 @@ static void N64_MusRenderVoice(int voice, int32_t *mix_l, int32_t *mix_r)
             }
         }
 
-        sample = (int16_t)((int16_t)mv->wave[mv->index >> 16] << 8);
+        sample_index = mv->index >> 16;
+        if (mv->instrument < MUS_NUM_MIDI_INSTRUMENTS
+            && mus_instruments[mv->instrument].loaded)
+        {
+            inst = &mus_instruments[mv->instrument];
+        }
+
+        if (mv->adpcm_active
+            && inst
+            && inst->encoding == N64_MUS_SAMPLE_ADPCM_IMA4)
+        {
+            sample = N64_MusVoiceDecodeAdpcmSample(mv,
+                                                   inst,
+                                                   sample_index,
+                                                   wrapped ? true : false);
+        }
+        else
+        {
+            sample = (int16_t)((int16_t)mv->wave[sample_index] << 8);
+        }
+
         mv->index += mv->step ? mv->step : 1;
     }
     else if (mv->fallback_mode == MUS_FALLBACK_NOISE)
@@ -1500,8 +1929,8 @@ static void N64_MusWaveRead(void *ctx, samplebuffer_t *sbuf,
 {
     int16_t *buf;
     int i, v;
-    int32_t sum;
 #if DOOM_N64_DEBUG
+    int32_t sum;
     int32_t abs_sum;
 #endif
     int32_t mix_l;
@@ -1578,9 +2007,8 @@ static void N64_MusWaveRead(void *ctx, samplebuffer_t *sbuf,
         buf[i * 2]     = (int16_t)mix_l;
         buf[i * 2 + 1] = (int16_t)mix_r;
 
+#if DOOM_N64_DEBUG
         sum = (mix_l + mix_r) / 2;
-
-        #if DOOM_N64_DEBUG
         abs_sum = (sum < 0) ? -sum : sum;
         if (abs_sum > mus_player.dbg_peak_abs)
             mus_player.dbg_peak_abs = abs_sum;
@@ -1600,7 +2028,7 @@ static void N64_MusWaveRead(void *ctx, samplebuffer_t *sbuf,
         }
 
         mus_player.dbg_generated_samples++;
-        #endif
+#endif
     }
 
     #if DOOM_N64_DEBUG

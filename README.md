@@ -167,17 +167,14 @@ When a PWAD is selected:
 Current default bindings from the N64 platform input layer:
 
 - Start: Open/close menu
-- Analog Stick: Move forward/back and turn left/right
+- Analog Thumbstick: Move forward/back, turn left/right
+- D-Pad: Move forward/back, turn left/right
 - C-Left: Strafe left
 - C-Right: Strafe right
-- C-Up: Run (speed modifier)
+- C-Up: Toggle automap
 - C-Down: Use/Open
-- L: Toggle automap
-- R: Fire
-- D-Pad Up: Pause
-- D-Pad Down: Cycle thru selectable weapons
-- D-Pad Left: Select previous weapon
-- D-Pad Right: Select next weapon
-- A : Fire & Confirm/Enter (Menu)
-- B : Use/Open & Back (Menu)
-- Z : Fire
+- Z: Fire
+- L: Fire
+- R: Run
+- A: Previous weapon, Confirm/Enter
+- B: Next weapon, Back

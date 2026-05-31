@@ -452,22 +452,12 @@ menu_t  SoundDef =
 enum
 {
     load1,
-    load2,
-    load3,
-    load4,
-    load5,
-    load6,
     load_end
 } load_e;
 
 menuitem_t LoadMenu[]=
 {
-    {1,"", M_LoadSelect,'1'},
-    {1,"", M_LoadSelect,'2'},
-    {1,"", M_LoadSelect,'3'},
-    {1,"", M_LoadSelect,'4'},
-    {1,"", M_LoadSelect,'5'},
-    {1,"", M_LoadSelect,'6'}
+    {1,"", M_LoadSelect,'1'}
 };
 
 menu_t  LoadDef =
@@ -485,12 +475,7 @@ menu_t  LoadDef =
 //
 menuitem_t SaveMenu[]=
 {
-    {1,"", M_SaveSelect,'1'},
-    {1,"", M_SaveSelect,'2'},
-    {1,"", M_SaveSelect,'3'},
-    {1,"", M_SaveSelect,'4'},
-    {1,"", M_SaveSelect,'5'},
-    {1,"", M_SaveSelect,'6'}
+    {1,"", M_SaveSelect,'1'}
 };
 
 menu_t  SaveDef =
@@ -510,6 +495,24 @@ menu_t  SaveDef =
 //
 void M_ReadSaveStrings(void)
 {
+#ifdef N64
+    int i;
+    const char* save_key;
+
+    for (i = 0; i < load_end; i++)
+    {
+        strcpy(&savegamestrings[i][0], EMPTYSTRING);
+        LoadMenu[i].status = 0;
+    }
+
+    save_key = D_N64GetSaveKey();
+    if (!save_key || !save_key[0])
+        save_key = "DOOM";
+
+    strncpy(&savegamestrings[0][0], save_key, SAVESTRINGSIZE - 1);
+    savegamestrings[0][SAVESTRINGSIZE - 1] = '\0';
+    LoadMenu[0].status = 1;
+#else
     int             handle;
     int             count;
     int             i;
@@ -533,6 +536,7 @@ void M_ReadSaveStrings(void)
 	close (handle);
 	LoadMenu[i].status = 1;
     }
+#endif
 }
 
 
@@ -579,11 +583,15 @@ void M_DrawSaveLoadBorder(int x,int y)
 void M_LoadSelect(int choice)
 {
     char    name[256];
-	
+
+#ifdef N64
+    name[0] = '\0';
+#else
     if (M_CheckParm("-cdrom"))
 	sprintf(name,"c:\\doomdata\\"SAVEGAMENAME"%d.dsg",choice);
     else
 	sprintf(name,SAVEGAMENAME"%d.dsg",choice);
+#endif
     G_LoadGame (name);
     M_ClearMenus ();
 }

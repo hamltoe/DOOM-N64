@@ -23,6 +23,7 @@ static boolean n64_split_active;
 static int n64_split_player_count;
 static int n64_split_prev_count;
 static n64_local_input_t n64_local_inputs[MAXPLAYERS];
+static joypad_port_t n64_last_active_port = JOYPAD_PORT_1;
 static boolean n64_local_weapon_cycle_down[MAXPLAYERS];
 static boolean n64_local_weapon_prev_down[MAXPLAYERS];
 static boolean n64_local_weapon_next_down[MAXPLAYERS];
@@ -239,6 +240,23 @@ static int I_MenuAxisStep(int value)
     return 0;
 }
 
+static int I_PortHasActivity(joypad_port_t port)
+{
+    joypad_buttons_t pressed;
+    joypad_inputs_t inputs;
+
+    if (!joypad_is_connected(port))
+        return 0;
+
+    pressed = joypad_get_buttons_pressed(port);
+    if (pressed.raw)
+        return 1;
+
+    inputs = joypad_get_inputs(port);
+    return (inputs.stick_x > 48 || inputs.stick_x < -48
+        || inputs.stick_y > 48 || inputs.stick_y < -48);
+}
+
 static void I_UpdateKeyState(boolean down, int state_index, int keycode)
 {
     if (down && !key_state[state_index])
@@ -398,6 +416,11 @@ void I_N64GetLocalInputState(int player_index, n64_local_input_t* out_state)
     *out_state = n64_local_inputs[player_index];
 }
 
+int I_N64GetActiveGameplayPort(void)
+{
+    return (int)n64_last_active_port;
+}
+
 void I_N64SplitScreenBeginFrame(int player_count)
 {
     if (player_count < 1)
@@ -472,6 +495,7 @@ void I_ShutdownGraphics(void)
 
     n64_split_active = false;
     n64_split_player_count = 1;
+    n64_last_active_port = JOYPAD_PORT_1;
     memset(n64_local_inputs, 0, sizeof(n64_local_inputs));
 
     surface_free(&doom_screen8);
@@ -491,6 +515,8 @@ void I_StartTic(void)
     joypad_inputs_t inputs;
     joypad_buttons_t buttons;
     joypad_buttons_t pressed;
+    joypad_port_t active_port;
+    int have_connected;
     joypad_port_t port;
     int playernum;
     int stick_x;
@@ -499,6 +525,32 @@ void I_StartTic(void)
     int joy_y;
 
     joypad_poll();
+
+    active_port = JOYPAD_PORT_1;
+    have_connected = 0;
+    JOYPAD_PORT_FOREACH(port)
+    {
+        if (!joypad_is_connected(port))
+            continue;
+
+        if (!have_connected)
+        {
+            active_port = port;
+            have_connected = 1;
+        }
+
+        if (I_PortHasActivity(port))
+        {
+            active_port = port;
+            break;
+        }
+    }
+
+    if (have_connected)
+        n64_last_active_port = active_port;
+    else
+        n64_last_active_port = JOYPAD_PORT_1;
+
     inputs = joypad_get_inputs(JOYPAD_PORT_1);
     buttons = inputs.btn;
     pressed = joypad_get_buttons_pressed(JOYPAD_PORT_1);
@@ -695,6 +747,7 @@ void I_InitGraphics(void)
     n64_split_active = false;
     n64_split_player_count = 1;
     n64_split_prev_count = 0;
+    n64_last_active_port = JOYPAD_PORT_1;
     memset(n64_local_inputs, 0, sizeof(n64_local_inputs));
     memset(n64_local_weapon_cycle_down, 0, sizeof(n64_local_weapon_cycle_down));
     memset(n64_local_weapon_prev_down, 0, sizeof(n64_local_weapon_prev_down));

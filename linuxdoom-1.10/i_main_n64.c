@@ -35,6 +35,19 @@ int main(void)
     dfs_init(DFS_DEFAULT_LOCATION);
     joypad_init();
 
+    switch (joypad_get_accessory_type(JOYPAD_PORT_1))
+    {
+        case JOYPAD_ACCESSORY_TYPE_CONTROLLER_PAK:
+            debugf("N64 startup: Controller Pak detected on port 1\n");
+            break;
+        case JOYPAD_ACCESSORY_TYPE_NONE:
+            debugf("N64 startup: no accessory on port 1\n");
+            break;
+        default:
+            debugf("N64 startup: non-pak accessory on port 1\n");
+            break;
+    }
+
     for (;;)
     {
         (void)setjmp(n64_browser_return);

@@ -157,11 +157,6 @@ rcsid[] = "$Id: st_stuff.c,v 1.6 1997/02/03 22:45:13 b1 Exp $";
 #define ST_FRAGSY			171	
 #define ST_FRAGSWIDTH		2
 
-// DEBUG-only FPS counter (short yellow digits).
-#define ST_FPSWIDTH			3
-#define ST_FPSX				280
-#define ST_FPSY				171
-
 // ARMOR number pos.
 #define ST_ARMORWIDTH		3
 #define ST_ARMORX			221
@@ -349,11 +344,6 @@ static st_number_t	w_ready;
  // in deathmatch only, summary of frags stats
 static st_number_t	w_frags;
 
-#if DEBUG
-// DEBUG-only FPS widget.
-static st_number_t	w_fps;
-#endif
-
 // health widget
 static st_percent_t	w_health;
 
@@ -384,13 +374,6 @@ static st_number_t	w_maxammo[4];
  // number of frags so far in deathmatch
 static int	st_fragscount;
 
-#if DEBUG
-// DEBUG-only FPS state.
-static int	st_fps = 0;
-static int	st_fps_frames = 0;
-static int	st_fps_lasttic = -1;
-#endif
-
 // used to use appopriately pained face
 static int	st_oldhealth = -1;
 
@@ -408,34 +391,6 @@ static int	keyboxes[3];
 
 // a random number per tick
 static int	st_randomnumber;  
-
-#if DEBUG
-static void ST_updateDebugFps(void)
-{
-	int nowtic;
-	int elapsed;
-
-	nowtic = I_GetTime();
-
-	if (st_fps_lasttic < 0)
-	{
-		st_fps_lasttic = nowtic;
-		st_fps_frames = 0;
-		st_fps = 0;
-		return;
-	}
-
-	st_fps_frames++;
-	elapsed = nowtic - st_fps_lasttic;
-
-	if (elapsed >= TICRATE)
-	{
-		st_fps = (st_fps_frames * TICRATE + (elapsed / 2)) / elapsed;
-		st_fps_frames = 0;
-		st_fps_lasttic = nowtic;
-	}
-}
-#endif
 
 
 
@@ -1129,10 +1084,6 @@ void ST_drawWidgets(boolean refresh)
 
     STlib_updateNum(&w_frags, refresh);
 
-#if DEBUG
-	STlib_updateNum(&w_fps, refresh);
-#endif
-
 }
 
 void ST_doRefresh(void)
@@ -1159,10 +1110,6 @@ void ST_Drawer (boolean fullscreen, boolean refresh)
   
     st_statusbaron = (!fullscreen) || automapactive;
     st_firsttime = st_firsttime || refresh;
-
-#if DEBUG
-	ST_updateDebugFps();
-#endif
 
     // Do red-/gold-shifts from damage/items
     ST_doPaletteStuff();
@@ -1320,12 +1267,6 @@ void ST_initData(void)
 
     st_oldhealth = -1;
 
-#if DEBUG
-	st_fps = 0;
-	st_fps_frames = 0;
-	st_fps_lasttic = -1;
-#endif
-
     for (i=0;i<NUMWEAPONS;i++)
 	oldweaponsowned[i] = plyr->weaponowned[i];
 
@@ -1390,16 +1331,6 @@ void ST_createWidgets(void)
 		  &st_fragscount,
 		  &st_fragson,
 		  ST_FRAGSWIDTH);
-
-#if DEBUG
-    STlib_initNum(&w_fps,
-		  ST_FPSX,
-		  ST_FPSY,
-		  shortnum,
-		  &st_fps,
-		  &st_statusbaron,
-		  ST_FPSWIDTH);
-#endif
 
     // faces
     STlib_initMultIcon(&w_faces,

@@ -38,6 +38,8 @@ we are building our project on the follwing libraries developed by the N64 homeb
 ## Reference examples for best practices on using library functionality
 - `libdragon/examples/` — Audio, input, rendering, filesystem demos
 - `tiny3d/examples/` — 3D model loading, animation, lighting demos
+- `DOOM_N64_Port_Example/src/` — Another Doom port that we cn use to draw examples from
+*Never include any example content in the main project*
 
 # Smart Caveman Speaking Mode
 ## Core Rules

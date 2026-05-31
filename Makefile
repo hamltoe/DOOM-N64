@@ -108,7 +108,8 @@ DOOM_COMMON_SRCS = \
 	$(DOOM_SRC)/s_sound.c \
 	$(DOOM_SRC)/z_zone.c \
 	$(DOOM_SRC)/info.c \
-	$(DOOM_SRC)/sounds.c
+	$(DOOM_SRC)/sounds.c \
+	$(DOOM_SRC)/lzfx.c
 
 DOOM_PLATFORM_SRCS = \
 	$(DOOM_SRC)/i_main_n64.c \
@@ -132,7 +133,7 @@ MUSIC_ASSETS_CONV = \
 	$(addprefix $(N64_MKDFS_ROOT)/music/,$(notdir $(MUSIC_ASSETS_YM_LOWER:%.ym=%.ym64))) \
 	$(addprefix $(N64_MKDFS_ROOT)/music/,$(notdir $(MUSIC_ASSETS_YM_UPPER:%.YM=%.ym64)))
 
-MUS_INSTRUMENT_BANK_SRC ?= DOOM_N64_Port_Example/assets/MIDI_Instruments.bin
+MUS_INSTRUMENT_BANK_SRC ?= assets/MIDI_Instruments.bin
 MUS_BANK_PROFILE ?= legacy
 MUS_BANK_TOOL_SRC := tools/mus_bank_tier1.c
 MUS_BANK_TOOL_BIN := $(BUILD_DIR)/host/mus_bank_tier1
@@ -198,32 +199,32 @@ check-music-assets:
 		echo "    [AUDIO] Missing Tier1 converter source ($(MUS_BANK_TOOL_SRC)); auto-falling back to legacy MUS bank staging."; \
 	fi
 
-$(N64_MKDFS_ROOT)/%.wad: WADs/%.wad | $(FS_PREP_STAMP)
+$(N64_MKDFS_ROOT)/%.wad: WADs/%.wad $(FS_PREP_STAMP)
 	@mkdir -p $(dir $@)
 	@echo "    [WAD] $< -> $@"
 	@cp "$<" "$@"
 
-$(N64_MKDFS_ROOT)/%.WAD: WADs/%.WAD | $(FS_PREP_STAMP)
+$(N64_MKDFS_ROOT)/%.WAD: WADs/%.WAD $(FS_PREP_STAMP)
 	@mkdir -p $(dir $@)
 	@echo "    [WAD] $< -> $@"
 	@cp "$<" "$@"
 
-$(N64_MKDFS_ROOT)/music/%.xm64: assets/music/%.xm | $(FS_PREP_STAMP)
+$(N64_MKDFS_ROOT)/music/%.xm64: assets/music/%.xm $(FS_PREP_STAMP)
 	@mkdir -p $(dir $@)
 	@echo "    [AUDIO] $@"
 	@$(N64_AUDIOCONV) -o $(N64_MKDFS_ROOT)/music "$<"
 
-$(N64_MKDFS_ROOT)/music/%.xm64: assets/music/%.XM | $(FS_PREP_STAMP)
+$(N64_MKDFS_ROOT)/music/%.xm64: assets/music/%.XM $(FS_PREP_STAMP)
 	@mkdir -p $(dir $@)
 	@echo "    [AUDIO] $@"
 	@$(N64_AUDIOCONV) -o $(N64_MKDFS_ROOT)/music "$<"
 
-$(N64_MKDFS_ROOT)/music/%.ym64: assets/music/%.ym | $(FS_PREP_STAMP)
+$(N64_MKDFS_ROOT)/music/%.ym64: assets/music/%.ym $(FS_PREP_STAMP)
 	@mkdir -p $(dir $@)
 	@echo "    [AUDIO] $@"
 	@$(N64_AUDIOCONV) -o $(N64_MKDFS_ROOT)/music "$<"
 
-$(N64_MKDFS_ROOT)/music/%.ym64: assets/music/%.YM | $(FS_PREP_STAMP)
+$(N64_MKDFS_ROOT)/music/%.ym64: assets/music/%.YM $(FS_PREP_STAMP)
 	@mkdir -p $(dir $@)
 	@echo "    [AUDIO] $@"
 	@$(N64_AUDIOCONV) -o $(N64_MKDFS_ROOT)/music "$<"
@@ -238,7 +239,7 @@ $(MUS_INSTRUMENT_BANK_TIER1): $(MUS_INSTRUMENT_BANK_SRC) $(MUS_BANK_TOOL_BIN)
 	@echo "    [AUDIO] Tier1 MUS bank $@"
 	@"$(MUS_BANK_TOOL_BIN)" "$<" "$@"
 
-$(N64_MKDFS_ROOT)/music/MIDI_Instruments.bin: $(MUS_INSTRUMENT_BANK_STAGE_SRC) | $(FS_PREP_STAMP)
+$(N64_MKDFS_ROOT)/music/MIDI_Instruments.bin: $(MUS_INSTRUMENT_BANK_STAGE_SRC) $(FS_PREP_STAMP)
 	@mkdir -p $(dir $@)
 	@echo "    [AUDIO] MUS bank ($(MUS_BANK_PROFILE_EFFECTIVE)) $< -> $@"
 	@cp "$<" "$@"

@@ -76,6 +76,7 @@ typedef struct n64_local_input_s
 void I_N64GetLocalInputState(int player_index, n64_local_input_t* out_state);
 void I_N64SplitScreenBeginFrame(int player_count);
 void I_N64SplitScreenEndFrame(void);
+int I_N64GetActiveGameplayPort(void);
 #endif
 
 

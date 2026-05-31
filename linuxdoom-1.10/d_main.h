@@ -61,4 +61,8 @@ void D_PageDrawer (void);
 void D_AdvanceDemo (void);
 void D_StartTitle (void);
 
+#ifdef N64
+const char* D_N64GetSaveKey(void);
+#endif
+
 #endif

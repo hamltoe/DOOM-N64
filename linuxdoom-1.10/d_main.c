@@ -218,6 +218,57 @@ typedef struct d_n64_split_rect_s
 
 #define N64_SPLIT_HUD_PAD_X 2
 #define N64_SPLIT_HUD_TEXT_Y_OFFSET 10
+#if DEBUG
+#define N64_SPLIT_FPS_PAD_X 2
+#define N64_SPLIT_FPS_PAD_Y 2
+
+static int d_n64_debug_fps = 0;
+static int d_n64_debug_fps_frames = 0;
+static int d_n64_debug_fps_lasttic = -1;
+static char d_n64_debug_fps_text[16] = "0";
+
+static void D_N64UpdateDebugFps(void)
+{
+	int nowtic;
+	int elapsed;
+
+	nowtic = I_GetTime();
+
+	if (d_n64_debug_fps_lasttic < 0)
+	{
+		d_n64_debug_fps_lasttic = nowtic;
+		d_n64_debug_fps_frames = 0;
+		d_n64_debug_fps = 0;
+		sprintf(d_n64_debug_fps_text, "%d", d_n64_debug_fps);
+		return;
+	}
+
+	d_n64_debug_fps_frames++;
+	elapsed = nowtic - d_n64_debug_fps_lasttic;
+
+	if (elapsed >= TICRATE)
+	{
+		d_n64_debug_fps = (d_n64_debug_fps_frames * TICRATE + (elapsed / 2)) / elapsed;
+		d_n64_debug_fps_frames = 0;
+		d_n64_debug_fps_lasttic = nowtic;
+		sprintf(d_n64_debug_fps_text, "%d", d_n64_debug_fps);
+	}
+}
+
+static void D_N64DrawDebugFps(const d_n64_split_rect_t* pane_rect)
+{
+	if (!pane_rect)
+	    return;
+
+	if (pane_rect->w < 1 || pane_rect->h < 1)
+	    return;
+
+	M_DrawText(pane_rect->x + N64_SPLIT_FPS_PAD_X,
+		   pane_rect->y + N64_SPLIT_FPS_PAD_Y,
+		   true,
+		   d_n64_debug_fps_text);
+}
+#endif
 
 static int D_N64GetPlayerHudAmmo(const player_t* player)
 {
@@ -548,6 +599,9 @@ void D_Display (void)
     if (gamestate == GS_LEVEL && !automapactive && gametic)
 	{
 #ifdef N64
+#if DEBUG
+	    D_N64UpdateDebugFps();
+#endif
 	    if (splitplayers > 1)
 	    {
 		restoredisplayplayer = displayplayer;
@@ -588,12 +642,28 @@ void D_Display (void)
 		    I_N64SplitScreenEndFrame();
 		else
 		    R_RenderPlayerView (&players[restoredisplayplayer]);
+	    #if DEBUG
+		splitrect.x = 0;
+		splitrect.y = 0;
+		splitrect.w = SCREENWIDTH;
+		splitrect.h = SCREENHEIGHT;
+		D_N64DrawDebugFps(&splitrect);
+	    #endif
 		displayplayer = restoredisplayplayer;
 	    }
 	    else
 #endif
 	    {
 		R_RenderPlayerView (&players[displayplayer]);
+	#ifdef N64
+	#if DEBUG
+		viewrect.x = viewwindowx;
+		viewrect.y = viewwindowy;
+		viewrect.w = scaledviewwidth;
+		viewrect.h = viewheight;
+		D_N64DrawDebugFps(&viewrect);
+	#endif
+	#endif
 	    }
 	}
 
@@ -937,6 +1007,8 @@ static void D_N64ResetWadFileList(void)
 	}
 }
 
+static char d_n64_save_key[17] = "DOOM";
+
 static int D_N64StrCaseCmp(const char* left, const char* right)
 {
 	unsigned char lc;
@@ -976,6 +1048,36 @@ static const char* D_N64BaseName(const char* path)
 	}
 
 	return base;
+}
+
+static void D_N64BuildSaveKey(const char* path)
+{
+	const char* name;
+	size_t i;
+	size_t out;
+	unsigned char ch;
+
+	name = D_N64BaseName(path);
+	memset(d_n64_save_key, 0, sizeof(d_n64_save_key));
+
+	out = 0;
+	for (i = 0; name[i] && name[i] != '.' && out < sizeof(d_n64_save_key) - 1; i++)
+	{
+		ch = (unsigned char)name[i];
+		if (ch >= 'a' && ch <= 'z')
+			ch = (unsigned char)(ch - ('a' - 'A'));
+
+		if ((ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9'))
+			d_n64_save_key[out++] = (char)ch;
+	}
+
+	if (!out)
+		strcpy(d_n64_save_key, "DOOM");
+}
+
+const char* D_N64GetSaveKey(void)
+{
+	return d_n64_save_key;
 }
 
 static GameMode_t D_N64GamemodeFromWad(const char* path)
@@ -1087,7 +1189,9 @@ void IdentifyVersion (void)
 	}
 
 	gamemode = D_N64GamemodeFromWad(base_iwad);
+	D_N64BuildSaveKey(selected_is_iwad ? base_iwad : selected_wad);
 	N64_DEBUGF("IdentifyVersion: gamemode=%d\n", (int)gamemode);
+	N64_DEBUGF("IdentifyVersion: save_key=%s\n", d_n64_save_key);
 	D_AddFile ((char*)base_iwad);
 
 	if (!selected_is_iwad)

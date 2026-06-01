@@ -1094,6 +1094,8 @@ static void N64_MusUnloadInstruments(void)
 static boolean N64_MusLoadPointerTable(void)
 {
     static const char* bank_paths[] = {
+        "rom:/MUS/MIDI_Instruments",
+        "rom:/MUS/MIDI_Instruments.bin",
         "rom:/music/MIDI_Instruments.bin",
         "rom:/MIDI_Instruments.bin"
     };

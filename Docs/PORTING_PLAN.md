@@ -233,6 +233,13 @@ Notes:
 - Place source music modules in `assets/music/` as `.xm`/`.ym` files.
 - Build converts them to `filesystem/music/*.xm64` / `filesystem/music/*.ym64`
   via `audioconv64` rules in root `Makefile`.
+- MUS fallback now uses example-driven interpretation with channel instrument,
+  volume/pan, pitch wheel, note mapping, and sampled instrument playback when
+  `MIDI_Instruments` is present
+- Instrument bank search order at runtime: `rom:/MUS/MIDI_Instruments`, then
+  `rom:/MUS/MIDI_Instruments`, then legacy fallback `rom:/MIDI_Instruments.bin`
+- Build will stage `MUS/MIDI_Instruments` into
+  `filesystem/MUS/MIDI_Instruments` when available.
 - Runtime file lookup order per lump: `rom:/music/<lump>.xm64`,
   `rom:/music/<lump>.ym64`, then same names under `rom:/`.
 - Recommended naming: lowercase 8-char lump names, eg `d_e1m1.xm`.

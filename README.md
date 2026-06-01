@@ -178,3 +178,6 @@ Current default bindings from the N64 platform input layer:
 - R: Run
 - A: Previous weapon, Confirm/Enter
 - B: Next weapon, Back
+
+# Credits
+`Crediits.md` contains licensing and acknowledgment to contributing members

@@ -180,4 +180,4 @@ Current default bindings from the N64 platform input layer:
 - B: Next weapon, Back
 
 # Credits
-`Crediits.md` contains licensing and acknowledgment to contributing members
+`Credits.md` contains licensing and acknowledgment to contributing members

@@ -206,6 +206,7 @@ extern  int             screenblocks;
 extern  int             setblocks;
 extern  int             setdetail;
 void R_ExecuteSetViewSize (void);
+int M_StringWidth(char* string);
 
 #ifdef N64
 typedef struct d_n64_split_rect_s
@@ -257,13 +258,21 @@ static void D_N64UpdateDebugFps(void)
 
 static void D_N64DrawDebugFps(const d_n64_split_rect_t* pane_rect)
 {
+	int text_x;
+	int text_width;
+
 	if (!pane_rect)
 	    return;
 
 	if (pane_rect->w < 1 || pane_rect->h < 1)
 	    return;
 
-	M_DrawText(pane_rect->x + N64_SPLIT_FPS_PAD_X,
+	text_width = M_StringWidth(d_n64_debug_fps_text);
+	text_x = pane_rect->x + pane_rect->w - N64_SPLIT_FPS_PAD_X - text_width;
+	if (text_x < pane_rect->x + N64_SPLIT_FPS_PAD_X)
+	    text_x = pane_rect->x + N64_SPLIT_FPS_PAD_X;
+
+	M_DrawText(text_x,
 		   pane_rect->y + N64_SPLIT_FPS_PAD_Y,
 		   true,
 		   d_n64_debug_fps_text);

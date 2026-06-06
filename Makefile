@@ -179,7 +179,6 @@ prepare-filesystem: $(FS_PREP_STAMP)
 $(FS_PREP_STAMP): FORCE
 	@echo "    [FS] Resetting filesystem"
 	@rm -rf $(N64_MKDFS_ROOT)
-	@mkdir -p $(N64_MKDFS_ROOT)/music
 	@mkdir -p $(N64_MKDFS_ROOT)/MUS
 	@mkdir -p $(BUILD_DIR)
 	@touch $@

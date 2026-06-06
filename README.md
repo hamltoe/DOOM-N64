@@ -1,15 +1,12 @@
 # DOOM-N64
-DOOM-N64 is a Windows-friendly porting project for running classic DOOM on the Nintendo 64. Play your favorite mods using the WAD browser to load IWAD and PWAD files at runtime.
+DOOM-N64 is a Windows-friendly porting project for running classic DOOM on the Nintendo 64. Play your favorite mods using the WAD browser to load IWAD and PWAD files at runtime. Try the original shareware demo on the [releases](https://github.com/hamltoe/DOOM-N64/releases) page.
 
-## What This Project Does
+# What This Project Does
 
 - Builds a Nintendo 64 DOOM ROM on Windows using WSL.
 - Lets you choose IWAD and PWAD files in an in-game WAD browser.
 - Copies all .wad/.WAD files from WADs/ into ROM filesystem during build.
 
-Important:
-- Keep WAD files in WADs/.
-- Do not manually edit filesystem/ for WADs. Build process resets that folder.
 
 ## You Need (One-Time)
 
@@ -139,7 +136,7 @@ Fix:
 ## Legal
 
 - Bring your legally owned IWAD/PWAD files.
-- tHIS Repository does not redistribute commercial IWAD content.
+- This Repository does not redistribute commercial IWAD content.
 
 ## Credits
 

@@ -39,6 +39,7 @@ rcsid[] = "$Id: p_inter.c,v 1.4 1997/02/03 22:45:11 b1 Exp $";
 #include "am_map.h"
 
 #include "p_local.h"
+#include "d_net.h"
 
 #include "s_sound.h"
 
@@ -49,6 +50,29 @@ rcsid[] = "$Id: p_inter.c,v 1.4 1997/02/03 22:45:11 b1 Exp $";
 
 
 #define BONUSADD	6
+
+static void
+P_NotifyPickupFeedback
+( player_t* player,
+  int      sound )
+{
+	if (!player)
+		return;
+
+	if (D_LocalMultiplayerEnabled())
+	{
+		if (player != &players[consoleplayer])
+			players[consoleplayer].bonuscount += BONUSADD;
+
+		if (sound)
+			S_StartSound (NULL, sound);
+
+		return;
+	}
+
+	if (player == &players[consoleplayer] && sound)
+		S_StartSound (NULL, sound);
+}
 
 
 
@@ -190,8 +214,7 @@ P_GiveWeapon
 	    P_GiveAmmo (player, weaponinfo[weapon].ammo, 2);
 	player->pendingweapon = weapon;
 
-	if (player == &players[consoleplayer])
-	    S_StartSound (NULL, sfx_wpnup);
+	P_NotifyPickupFeedback(player, sfx_wpnup);
 	return false;
     }
 	
@@ -421,49 +444,67 @@ P_TouchSpecialThing
       case SPR_BKEY:
 	if (!player->cards[it_bluecard])
 	    player->message = GOTBLUECARD;
+	i = !player->cards[it_bluecard];
 	P_GiveCard (player, it_bluecard);
 	if (!netgame)
 	    break;
+	if (i)
+	    P_NotifyPickupFeedback(player, sound);
 	return;
 	
       case SPR_YKEY:
 	if (!player->cards[it_yellowcard])
 	    player->message = GOTYELWCARD;
+	i = !player->cards[it_yellowcard];
 	P_GiveCard (player, it_yellowcard);
 	if (!netgame)
 	    break;
+	if (i)
+	    P_NotifyPickupFeedback(player, sound);
 	return;
 	
       case SPR_RKEY:
 	if (!player->cards[it_redcard])
 	    player->message = GOTREDCARD;
+	i = !player->cards[it_redcard];
 	P_GiveCard (player, it_redcard);
 	if (!netgame)
 	    break;
+	if (i)
+	    P_NotifyPickupFeedback(player, sound);
 	return;
 	
       case SPR_BSKU:
 	if (!player->cards[it_blueskull])
 	    player->message = GOTBLUESKUL;
+	i = !player->cards[it_blueskull];
 	P_GiveCard (player, it_blueskull);
 	if (!netgame)
 	    break;
+	if (i)
+	    P_NotifyPickupFeedback(player, sound);
 	return;
 	
       case SPR_YSKU:
 	if (!player->cards[it_yellowskull])
 	    player->message = GOTYELWSKUL;
+	i = !player->cards[it_yellowskull];
 	P_GiveCard (player, it_yellowskull);
 	if (!netgame)
 	    break;
+	if (i)
+	    P_NotifyPickupFeedback(player, sound);
 	return;
 	
       case SPR_RSKU:
 	if (!player->cards[it_redskull])
 	    player->message = GOTREDSKULL;
+	i = !player->cards[it_redskull];
 	P_GiveCard (player, it_redskull);
 	if (!netgame)
 	    break;
+	if (i)
+	    P_NotifyPickupFeedback(player, sound);
 	return;
 	
 	// medikits, heals
@@ -656,8 +697,7 @@ P_TouchSpecialThing
 	player->itemcount++;
     P_RemoveMobj (special);
     player->bonuscount += BONUSADD;
-    if (player == &players[consoleplayer])
-	S_StartSound (NULL, sound);
+	P_NotifyPickupFeedback(player, sound);
 }
 
 

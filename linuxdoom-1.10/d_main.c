@@ -585,6 +585,7 @@ void D_Display (void)
 	else
 	{
 	    fullscreen = true;
+	    ST_doPaletteStuff();
 	}
 	break;
 

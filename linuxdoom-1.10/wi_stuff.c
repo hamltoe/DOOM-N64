@@ -1539,6 +1539,7 @@ void WI_loadData(void)
 {
     int		i;
     int		j;
+	int         wiobj_lump;
     char	name[9];
     anim_t*	a;
 
@@ -1659,7 +1660,14 @@ void WI_loadData(void)
     {
 	// "items"
 	if (netgame && !deathmatch)
-	    items = W_CacheLumpName("WIOBJ", PU_STATIC);    
+	{
+	    // Some IWADs omit WIOBJ; use standard items label instead of aborting.
+	    wiobj_lump = W_CheckNumForName("WIOBJ");
+	    if (wiobj_lump >= 0)
+		items = W_CacheLumpNum(wiobj_lump, PU_STATIC);
+	    else
+		items = W_CacheLumpName("WIOSTI", PU_STATIC);
+	}
   	else
 	    items = W_CacheLumpName("WIOSTI", PU_STATIC);
     } else

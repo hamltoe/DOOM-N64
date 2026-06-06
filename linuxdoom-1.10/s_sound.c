@@ -34,6 +34,8 @@ rcsid[] = "$Id: s_sound.c,v 1.6 1997/02/03 22:45:12 b1 Exp $";
 #include "sounds.h"
 #include "s_sound.h"
 
+#include "d_net.h"
+
 #include "z_zone.h"
 #include "m_random.h"
 #include "w_wad.h"
@@ -310,9 +312,10 @@ S_StartSoundAtVolume
   }
 
 
-  // Check to see if it is audible,
-  //  and if not, modify the params
-  if (origin && origin != players[consoleplayer].mo)
+    // Local split-screen uses a shared mix: no distance culling/attenuation.
+    if (origin
+            && origin != players[consoleplayer].mo
+            && !D_LocalMultiplayerEnabled())
   {
     rc = S_AdjustSoundParams(players[consoleplayer].mo,
 			     origin,
@@ -590,9 +593,10 @@ void S_UpdateSounds(void* listener_p)
 		    }
 		}
 
-		// check non-local sounds for distance clipping
-		//  or modify their params
-		if (c->origin && listener_p != c->origin)
+        // Local split-screen uses a shared mix: no distance culling/attenuation.
+        if (c->origin
+            && listener_p != c->origin
+            && !D_LocalMultiplayerEnabled())
 		{
 		    audible = S_AdjustSoundParams(listener,
 						  c->origin,
@@ -607,6 +611,10 @@ void S_UpdateSounds(void* listener_p)
 		    else
 			I_UpdateSoundParams(c->handle, volume, sep, pitch);
 		}
+        else if (c->origin)
+        {
+            I_UpdateSoundParams(c->handle, volume, NORM_SEP, pitch);
+        }
 	    }
 	    else
 	    {

@@ -61,14 +61,21 @@ Debug build with logging:
 1. Run Task
 2. Select build-doom-debug
 
+Post-build verification:
+1. Run Task
+2. Select verify-wsl-n64-env
+
+Important:
+- Run build and verify tasks sequentially (not concurrently).
+- All project tasks are pinned to `N64_INST=/opt/libdragon` and `N64_GCCPREFIX=/opt/libdragon`.
+
 Command-line build in WSL (same result):
 
 ```bash
-export PROJECT_ROOT="$(pwd)"
-export N64_INST="$PROJECT_ROOT/libdragon"
+export N64_INST=/opt/libdragon
 export N64_GCCPREFIX=/opt/libdragon
-export PATH="$N64_INST/bin:$PATH"
 make -j"$(nproc)"
+echo rom_bytes="$(stat -c%s Doom-N64.z64)"
 ```
 
 ### 4) Find output
@@ -117,9 +124,11 @@ Fix:
 Fix (one-time):
 
 ```bash
-make -C libdragon libdragon tools -j"$(nproc)" N64_INST="$N64_INST" N64_GCCPREFIX="$N64_GCCPREFIX"
-make -C libdragon install tools-install install-mk -j"$(nproc)" N64_INST="$N64_INST" N64_GCCPREFIX="$N64_GCCPREFIX"
+make -C libdragon tools -j"$(nproc)"
+make -C libdragon tools-install N64_INST="$(pwd)/libdragon" N64_GCCPREFIX=/opt/libdragon
 ```
+
+Then rerun `verify-wsl-n64-env`.
 
 ### Error: Permission denied on Doom-N64.z64
 

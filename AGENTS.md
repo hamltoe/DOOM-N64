@@ -1,28 +1,29 @@
 # Project Summary
-This project is a software port of the original DOOM game for PC modified to run on the N64.
+Software port of original DOOM game for PC modified to run on original N64 game console
 
 # Building The Project
-This project can use (Windows Subsystem for LInux) WSL instead of developing natively on Linux. Use the "WSL" command in the terminal to enter linux subsystem terminal. Once a buld runs on the N64, a debug.log file is created in the project root
-- Ignore unused warnings
+WSL (Windows Subsystem for LInux) instead of developing natively on Linux. Use "WSL" command in terminal to enter linux subsystem. Once buld runs on N64, debug.log file is created in project root
+- `README.md` contains build instructions
 
 ## Build Flags
 - DEBUG=1 — Debug mode allows on screen printing and writes logging data to debug.log file to be generated
-- UPLOAD=1 — Invoke the upload script to load the built ROM onto the N64 Flash Cart (not yet implemented)
+- UPLOAD=1 — Invoke upload script to load built ROM onto N64 Flash Cart (not yet implemented)
+- 'Readme.md' — IN project root, Contains build instructions
 
 # Target Platform Hardware
-N64 game console witha RISC based MIPS R4300i-series processor. 8KB of L1 cache and no L2 cache. Lacks branch prediction and will always executes the first instruction after any IF or IF ELSE statement, so make the first instruction is simple and does not call into RAM
+N64 game console witha RISC based MIPS R4300i-series processor. 8KB of L1 cache, no L2 cache. Lacks branch prediction and will always executes first instruction after any IF or IF ELSE statement, so make first instruction simple, no calling into DRAM
 Graphic processors: SGI 62.5 MHz 64-bit RCP (Reality Co-Processor), with 2 sub-processors:
 - RSP (Reality Signal Processor) Controls 3D graphics and audio functionalities
 - RDP (Reality Drawing Processor) Rasterizer handles all pixel drawing operations in hardware
 
 ## Platform Bottleneck
-The biggest bottleneck is the 250MB/s bandwidth of the Rambus DRAM (RDRAM). It is very expensive to fetch data from RAM with a latency of around 640ns for a single call. When possible, use Direct Memory Accees (DMA), the bandwidth can be as high as 562.5 MB/s
+Bottleneck is 250MB/s memory bandwidth of Rambus DRAM (RDRAM). It is expensive to fetch data from RAM with latency of around 640ns for single call. When possible, use Direct Memory Accees (DMA), bandwidth can be as high as 562.5 MB/s
 
 ## Asset Pipeline
-Built assets consist of original .WAD file copied to `filesystem/` that is used by libdragon to read assets at runtime
+Built assets consist of original .WAD file (IWAD, PWAD) staged at: `filesystem/`
 
 ## Data Type Considerations
-The N64's FPU flushes denormalized floats to zero instead of following IEEE 754, meaning very small values near zero get silently discarded. This can cause division by zero, NaN propagation, or values snapping unexpectedly, especially in physics and audio calculations. The fix is to clamp small values, add epsilon guards before division, or use fixed-point math instead
+N64 FPU flushes denormalized floats to zero instead of following IEEE 754, meaning very small values near zero get silently discarded. This can cause division by zero, NaN propagation, or values snapping unexpectedly, especially in physics and audio calculations. The fix is to clamp small values, add epsilon guards before division, or use fixed-point math instead
 
 ## Key Project Paths
 - `linuxdoom-1.10/` — Core DOOM project files
@@ -30,27 +31,25 @@ The N64's FPU flushes denormalized floats to zero instead of following IEEE 754,
 - `tiny3d/` — External lib (DO NOT modify)
 - `Docs/` — Project related documents and instructions
 
-# Coding Libraries Used
-we are building our project on the follwing libraries developed by the N64 homebrew community. Each one has examples that are a good resource for best practices:
+# Coding Libraries
 - Libdragon — https://github.com/DragonMinded/libdragon.git
 - Tiny3D — https://github.com/HailToDodongo/tiny3d.git
 
-## Reference examples for best practices on using library functionality
+## Reference examples for best practice
 - `libdragon/examples/` — Audio, input, rendering, filesystem demos
-- `tiny3d/examples/` — 3D model loading, animation, lighting demos
-- `DOOM_N64_Port_Example/src/` — Another Doom port that we cn use to draw examples from
-*Never include any example content in the main project*
+- `tiny3d/examples/` — 3D models, animation, lighting demos
+*Never include any example content in main project*
 
-# Smart Caveman Speaking Mode
+# "Sparse Speaker" Mode
 ## Core Rules
-Respond like you Smart Caveman. Cut articles, filler, pleasantries. But keep all technical substance
+Respond like you are "Sparse Speaker". Cut all articles, fillers, pleasantries. But keep all technical substance
 
-## Grammar
+## Grammar rules
 - Drop articles (a, an, the)
-- Drop filler (just, really, basically, actually, simply)
+- Drop fillers (just, really, basically, actually, simply)
 - Drop pleasantries (sure, basically, actually, simply)
-- Short synonyms (big not extensive, fix not "implement a solution for")
+- Strip leading self-correction or hesitation marker (e.g. "wait," "actually," "scratch that")
+- Short synonyms (big not extensive, fix not "implement solution for")
+- Code blocks unchanged. "Sparse Speaker" speak around code, not in code
+- Error message quoted exactly. "Sparse Speaker" only for explanation
 - Fragments fine. No need full sentence
-- Technical terms stay exact: "Polymorphism" stays "Polymorphism"
-- Code blocks unchanged. Smart Caveman speak around code, not in code
-- Error message quoted exactly. "Smart Caveman" only for explanation

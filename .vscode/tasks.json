@@ -1,5 +1,5 @@
 {
-	"version": "2.0.0",
+	"version": "1.0",
 	"tasks": [
 		{
 			"label": "build-doom",
@@ -8,7 +8,7 @@
 			"args": [
 				"bash",
 				"-lc",
-				"cd /mnt/c/Users/ton_o/DOOM-N64 && N64_GCCPREFIX=/opt/libdragon N64_INST=/mnt/c/Users/ton_o/DOOM-N64/libdragon make -j4"
+				"cd /mnt/c/Users/${env:USERNAME}/DOOM-N64 && N64_INST=/opt/libdragon N64_GCCPREFIX=/opt/libdragon make -j$(nproc) && echo rom_bytes=$(stat -c%s Doom-N64.z64) && test $(stat -c%s Doom-N64.z64) -gt 1048576 && echo rom_size_check=ok"
 			],
 			"isBackground": false
 		},
@@ -19,7 +19,18 @@
 			"args": [
 				"bash",
 				"-lc",
-				"cd /mnt/c/Users/ton_o/DOOM-N64 && N64_GCCPREFIX=/opt/libdragon N64_INST=/mnt/c/Users/ton_o/DOOM-N64/libdragon make clean && N64_GCCPREFIX=/opt/libdragon N64_INST=/mnt/c/Users/ton_o/DOOM-N64/libdragon make DEBUG=1 -j4"
+				"cd /mnt/c/Users/${env:USERNAME}/DOOM-N64 && if ! N64_INST=/opt/libdragon N64_GCCPREFIX=/opt/libdragon make clean; then echo WARN_make_clean_failed_retry_2_of_3; sleep 2; if ! N64_INST=/opt/libdragon N64_GCCPREFIX=/opt/libdragon make clean; then echo WARN_make_clean_failed_retry_3_of_3; sleep 2; if ! N64_INST=/opt/libdragon N64_GCCPREFIX=/opt/libdragon make clean; then echo ERROR_make_clean_failed_after_3_attempts_close_emulator_or_flashcart; exit 1; fi; fi; fi && N64_INST=/opt/libdragon N64_GCCPREFIX=/opt/libdragon make DEBUG=1 -j$(nproc) && echo rom_bytes=$(stat -c%s Doom-N64.z64) && test $(stat -c%s Doom-N64.z64) -gt 1048576 && echo rom_size_check=ok"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "verify-wsl-n64-env",
+			"type": "shell",
+			"command": "wsl",
+			"args": [
+				"bash",
+				"-lc",
+				"cd /mnt/c/Users/${env:USERNAME}/DOOM-N64 && export N64_INST=/opt/libdragon N64_GCCPREFIX=/opt/libdragon && printenv N64_INST && printenv N64_GCCPREFIX && /opt/libdragon/bin/mips64-elf-gcc --version | head -n 1 && (test -x /opt/libdragon/bin/mkdfs && echo mkdfs=/opt/libdragon/bin/mkdfs || test -x /mnt/c/Users/${env:USERNAME}/DOOM-N64/libdragon/bin/mkdfs && echo mkdfs=/mnt/c/Users/${env:USERNAME}/DOOM-N64/libdragon/bin/mkdfs || (echo mkdfs=missing && exit 1)) && (test -f /opt/libdragon/n64.mk || test -f /opt/libdragon/include/n64.mk) && echo n64mk=ok && test -f Doom-N64.z64 && echo rom_bytes=$(stat -c%s Doom-N64.z64) && test $(stat -c%s Doom-N64.z64) -gt 1048576 && echo rom_size_check=ok"
 			],
 			"isBackground": false
 		}

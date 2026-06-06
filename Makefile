@@ -166,7 +166,7 @@ ROM_NAME = Doom-N64
 FS_PREP_STAMP = $(BUILD_DIR)/.filesystem-prepared.stamp
 
 all: $(ROM_NAME).z64
-.PHONY: all clean prepare-filesystem check-wads check-music-assets FORCE
+.PHONY: all clean prepare-filesystem check-wads stage-wads check-music-assets FORCE
 
 FORCE:
 
@@ -188,6 +188,16 @@ check-wads: $(FS_PREP_STAMP)
 		echo "Missing WADs: place one or more .wad/.WAD files in WADs/"; \
 		exit 1; \
 	fi
+
+stage-wads: check-wads | $(FS_PREP_STAMP)
+	@set -e; \
+	for src in WADs/*.wad WADs/*.WAD; do \
+		if [ -f "$$src" ]; then \
+			dst="$(N64_MKDFS_ROOT)/$$(basename "$$src")"; \
+			echo "    [WAD] $$src -> $$dst"; \
+			cp "$$src" "$$dst"; \
+		fi; \
+	done
 
 check-music-assets:
 	@if [ -z "$(strip $(MUSIC_ASSETS_XM_LOWER) $(MUSIC_ASSETS_XM_UPPER) $(MUSIC_ASSETS_YM_LOWER) $(MUSIC_ASSETS_YM_UPPER))" ]; then \
@@ -247,8 +257,9 @@ $(N64_MKDFS_ROOT)/MUS/MIDI_Instruments: $(MUS_INSTRUMENT_BANK_STAGE_SRC) | $(FS_
 
 $(BUILD_DIR)/doom.dfs: $(FS_PREP_STAMP)
 $(BUILD_DIR)/doom.dfs: check-wads
+$(BUILD_DIR)/doom.dfs: stage-wads
 $(BUILD_DIR)/doom.dfs: check-music-assets
-$(BUILD_DIR)/doom.dfs: $(MUSIC_ASSETS_CONV) $(MUS_BANK_ASSET) $(WAD_ASSETS_COPY)
+$(BUILD_DIR)/doom.dfs: $(MUSIC_ASSETS_CONV) $(MUS_BANK_ASSET)
 
 clean:
 	rm -rf $(BUILD_DIR) *.z64 *.v64

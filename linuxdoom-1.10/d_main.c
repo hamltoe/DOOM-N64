@@ -219,6 +219,7 @@ typedef struct d_n64_split_rect_s
 
 #define N64_SPLIT_HUD_PAD_X 2
 #define N64_SPLIT_HUD_TEXT_Y_OFFSET 10
+#define N64_SPLIT_HUD_KEY_ROW_H 9
 #if DEBUG
 #define N64_SPLIT_FPS_PAD_X 2
 #define N64_SPLIT_FPS_PAD_Y 2
@@ -334,6 +335,24 @@ static void D_N64DrawSplitHud(const d_n64_split_rect_t* pane_rect, int playernum
 		   text_y,
 		   true,
 		   hudline);
+
+	// Draw keycard/skull icons on the row above the stats line so each
+	// split-screen player can see who holds which keys.
+	{
+	    int key_y;
+	    int key_max_x;
+
+	    key_y = text_y - N64_SPLIT_HUD_KEY_ROW_H;
+	    if (key_y < pane_rect->y)
+		key_y = pane_rect->y;
+
+	    key_max_x = pane_rect->x + pane_rect->w - N64_SPLIT_HUD_PAD_X;
+
+	    ST_DrawSplitKeys(pane_rect->x + N64_SPLIT_HUD_PAD_X,
+			     key_y,
+			     key_max_x,
+			     playernum);
+	}
 }
 
 static int D_N64CountActivePlayers(void)

@@ -56,6 +56,11 @@ void ST_Start (void);
 // Called by startup code.
 void ST_Init (void);
 
+// N64 local multiplayer: draws a compact row of keycard/skull icons for the
+// given player (using the standard STKEYS0-5 patches) starting at (x,y),
+// clipped to max_x. Returns the x coordinate just past the last icon drawn.
+int ST_DrawSplitKeys (int x, int y, int max_x, int playernum);
+
 
 
 // States for status bar code.

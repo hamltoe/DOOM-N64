@@ -33,6 +33,7 @@ rcsid[] = "$Id: st_stuff.c,v 1.6 1997/02/03 22:45:13 b1 Exp $";
 #include "i_video.h"
 #include "z_zone.h"
 #include "m_random.h"
+#include "m_swap.h"
 #include "w_wad.h"
 
 #include "doomdef.h"
@@ -1119,6 +1120,49 @@ void ST_Drawer (boolean fullscreen, boolean refresh)
     // Otherwise, update as little as possible
     else ST_diffDraw();
 
+}
+
+//
+// ST_DrawSplitKeys
+// N64 local multiplayer helper. The split-screen HUD bypasses ST_Drawer, so
+// this draws a compact row of keycard/skull icons for one player using the
+// standard STKEYS0-5 patches already loaded by ST_loadGraphics(). One slot per
+// color (blue/yellow/red); a held skull overrides the card for that color,
+// mirroring the normal status-bar keybox logic. Icons are clipped to max_x so
+// narrow split panes can never overflow the framebuffer.
+//
+int ST_DrawSplitKeys (int x, int y, int max_x, int playernum)
+{
+    int		i;
+    int		keyindex;
+    patch_t*	patch;
+
+    if (playernum < 0 || playernum >= MAXPLAYERS || !playeringame[playernum])
+	return x;
+
+    for (i = 0; i < 3; i++)
+    {
+	keyindex = -1;
+	if (players[playernum].cards[i])
+	    keyindex = i;
+	if (players[playernum].cards[i + 3])
+	    keyindex = i + 3;
+
+	if (keyindex < 0)
+	    continue;
+
+	patch = keys[keyindex];
+	if (!patch)
+	    continue;
+
+	if (x + SHORT(patch->width) > max_x)
+	    break;
+
+	V_DrawPatch(x, y, 0, patch);
+	x += SHORT(patch->width) + 1;
+    }
+
+    return x;
 }
 
 void ST_loadGraphics(void)

@@ -34,6 +34,7 @@ rcsid[] = "$Id: p_setup.c,v 1.5 1997/02/03 22:45:12 b1 Exp $";
 #include "m_bbox.h"
 
 #include "g_game.h"
+#include "d_net.h"
 
 #include "i_system.h"
 #include "w_wad.h"
@@ -113,34 +114,69 @@ mapthing_t	deathmatchstarts[MAX_DEATHMATCH_STARTS];
 mapthing_t*	deathmatch_p;
 mapthing_t	playerstarts[MAXPLAYERS];
 
+static short P_ClampMapthingCoord(int value)
+{
+    if (value < -32768)
+	return -32768;
+    if (value > 32767)
+	return 32767;
+    return (short)value;
+}
+
 static void P_NormalizePlayerStarts(void)
 {
     int i;
     int fallback;
+    int valid_count;
 
     fallback = -1;
+    valid_count = 0;
     for (i = 0; i < MAXPLAYERS; i++)
     {
-        if (playerstarts[i].type >= 1 && playerstarts[i].type <= 4)
-        {
-            fallback = i;
-            break;
-        }
+	if (playerstarts[i].type < 1 || playerstarts[i].type > 4)
+	    continue;
+
+	if (fallback < 0)
+	    fallback = i;
+	valid_count++;
     }
 
     if (fallback < 0)
-        return;
+	return;
+
+    // Some custom WAD maps provide only one player start. Build a compact
+    // 2x2 start cluster around that position so up to 4 players can spawn
+    // with a 1-unit personal gap (player radius is 16 map units).
+    if (valid_count == 1)
+    {
+	static const int packed_offsets[MAXPLAYERS][2] =
+	{
+        { -17, -17 },
+        {  17, -17 },
+        { -17,  17 },
+        {  17,  17 }
+	};
+	mapthing_t base_start;
+
+	base_start = playerstarts[fallback];
+	for (i = 0; i < MAXPLAYERS; i++)
+	{
+	    playerstarts[i] = base_start;
+	    playerstarts[i].type = i + 1;
+	    playerstarts[i].x = P_ClampMapthingCoord((int)base_start.x + packed_offsets[i][0]);
+	    playerstarts[i].y = P_ClampMapthingCoord((int)base_start.y + packed_offsets[i][1]);
+	}
+
+	return;
+    }
 
     for (i = 0; i < MAXPLAYERS; i++)
     {
-        if (!playeringame[i])
-            continue;
+	if (playerstarts[i].type >= 1 && playerstarts[i].type <= 4)
+	    continue;
 
-        if (playerstarts[i].type >= 1 && playerstarts[i].type <= 4)
-            continue;
-
-        playerstarts[i] = playerstarts[fallback];
-        playerstarts[i].type = i + 1;
+	playerstarts[i] = playerstarts[fallback];
+	playerstarts[i].type = i + 1;
     }
 }
 
@@ -691,6 +727,15 @@ P_SetupLevel
     bodyqueslot = 0;
     deathmatch_p = deathmatchstarts;
     memset(playerstarts, 0, sizeof(playerstarts));
+
+    // Local multiplayer players are spawned after P_NormalizePlayerStarts().
+    // Clear stale player mobj references from previous levels so the spawn
+    // pass below always uses normalized starts.
+    if (netgame && D_LocalMultiplayerEnabled())
+	for (i=0 ; i<MAXPLAYERS ; i++)
+	    if (playeringame[i])
+		players[i].mo = NULL;
+
     P_LoadThings (lumpnum+ML_THINGS);
     P_NormalizePlayerStarts();
 

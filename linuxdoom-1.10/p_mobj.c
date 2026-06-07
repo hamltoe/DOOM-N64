@@ -29,6 +29,7 @@ rcsid[] = "$Id: p_mobj.c,v 1.5 1997/02/03 22:45:12 b1 Exp $";
 #include "m_random.h"
 
 #include "doomdef.h"
+#include "d_net.h"
 #include "p_local.h"
 #include "sounds.h"
 
@@ -730,7 +731,7 @@ void P_SpawnMapThing (mapthing_t* mthing)
     {
 	// save spots for respawning in network games
 	playerstarts[mthing->type-1] = *mthing;
-	if (!deathmatch)
+    if (!deathmatch && !(netgame && D_LocalMultiplayerEnabled()))
 	    P_SpawnPlayer (mthing);
 
 	return;

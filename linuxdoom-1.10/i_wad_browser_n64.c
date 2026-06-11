@@ -20,7 +20,7 @@
 #include "i_wad_browser_n64.h"
 #include "n64_debug.h"
 
-#define N64_WAD_MAX_ENTRIES 96
+#define N64_WAD_MAX_ENTRIES 128
 #define N64_WAD_PATH_LEN 256
 #define N64_WAD_NAME_LEN 64
 
@@ -69,6 +69,7 @@ static char n64_selected_base_iwad[N64_WAD_PATH_LEN] = "rom:/doom.wad";
 static int n64_selected_player_count = 1;
 static char n64_browser_status_message[N64_WAD_TEXT_CACHE_TEXT_MAX];
 static rdpq_font_t* n64_wad_font;
+static bool n64_sd_mounted;
 
 typedef struct n64_wad_text_cache_entry_s
 {
@@ -455,6 +456,50 @@ static int I_WadScanCallback(const char* fn, dir_t* dir, void* data)
     return DIR_WALK_CONTINUE;
 }
 
+// Mounts the flashcart SD card filesystem under the "sd:/" prefix using
+// libdragon's FAT backend. Done lazily/on demand (never at startup) because
+// probing SD without a card inserted can crash the USB stack on some carts
+// (e.g. 64drive). The mount is kept open for the rest of the session so the
+// engine can stream the selected WAD directly from the card.
+static bool I_N64TryMountSd(void)
+{
+    if (n64_sd_mounted)
+        return true;
+
+    if (debug_init_sdfs("sd:/", -1))
+    {
+        n64_sd_mounted = true;
+        N64_DEBUGF("WAD browser: SD filesystem mounted (sd:/)\n");
+        return true;
+    }
+
+    N64_DEBUGF("WAD browser: SD mount failed (no card or unsupported flashcart)\n");
+    return false;
+}
+
+static int I_HasSdPrefix(const char* path)
+{
+    return path
+        && path[0] == 's'
+        && path[1] == 'd'
+        && path[2] == ':'
+        && path[3] == '/';
+}
+
+static int I_CountSdEntries(void)
+{
+    int i;
+    int count = 0;
+
+    for (i = 0; i < n64_wad_count; i++)
+    {
+        if (I_HasSdPrefix(n64_wad_entries[i].path))
+            count++;
+    }
+
+    return count;
+}
+
 static void I_ScanWadEntries(void)
 {
     int i;
@@ -464,6 +509,11 @@ static void I_ScanWadEntries(void)
     memset(n64_wad_entries, 0, sizeof(n64_wad_entries));
 
     dir_walk("rom:/", I_WadScanCallback, NULL);
+
+    // dir_walk recurses into every subdirectory, so a single walk from the
+    // card root finds .wad files in any folder (no fixed layout required).
+    if (n64_sd_mounted)
+        dir_walk("sd:/", I_WadScanCallback, NULL);
 
     if (n64_wad_count > 1)
     {
@@ -568,6 +618,46 @@ static void I_FillRect(int x, int y, int width, int height, color_t color)
     rdpq_fill_rectangle(x, y, x + width, y + height);
 }
 
+// rdpq_paragraph_build treats '^' as a style escape and '$' as a font escape
+// (each expects two following hex digits, and is doubled to render literally).
+// UI labels (e.g. "^ MORE ^") and arbitrary SD WAD filenames can contain these
+// characters, which would otherwise trip an assertion and crash. Double them so
+// they render as literal glyphs.
+static void I_EscapeRdpqControls(char* dst, size_t dst_size, const char* src)
+{
+    size_t di = 0;
+
+    if (!dst || dst_size == 0)
+        return;
+
+    if (!src)
+    {
+        dst[0] = '\0';
+        return;
+    }
+
+    while (*src)
+    {
+        char c = *src++;
+
+        if (c == '^' || c == '$')
+        {
+            if (di + 2 >= dst_size)
+                break;
+            dst[di++] = c;
+            dst[di++] = c;
+        }
+        else
+        {
+            if (di + 1 >= dst_size)
+                break;
+            dst[di++] = c;
+        }
+    }
+
+    dst[di] = '\0';
+}
+
 static void I_DrawTextSafe(int x,
                            int y,
                            int width,
@@ -584,9 +674,14 @@ static void I_DrawTextSafe(int x,
     n64_wad_text_cache_entry_t* entry;
     rdpq_textparms_t parms;
     int nbytes;
+    char build_text[2 * N64_WAD_PATH_LEN + 1];
 
     if (!text || width <= 0)
         return;
+
+    // The cache is keyed on the original text, but the paragraph is built from
+    // an escaped copy so rdpq control characters cannot crash the build.
+    I_EscapeRdpqControls(build_text, sizeof(build_text), text);
 
     layout = NULL;
     transient_layout = false;
@@ -638,8 +733,8 @@ static void I_DrawTextSafe(int x,
             parms.valign = VALIGN_TOP;
             parms.wrap = WRAP_ELLIPSES;
 
-            nbytes = (int)text_len;
-            entry->layout = rdpq_paragraph_build(&parms, N64_WAD_FONT_ID, text, &nbytes);
+            nbytes = (int)strlen(build_text);
+            entry->layout = rdpq_paragraph_build(&parms, N64_WAD_FONT_ID, build_text, &nbytes);
             if (!entry->layout)
             {
                 entry->in_use = false;
@@ -663,8 +758,8 @@ static void I_DrawTextSafe(int x,
         parms.valign = VALIGN_TOP;
         parms.wrap = WRAP_ELLIPSES;
 
-        nbytes = (int)text_len;
-        layout = rdpq_paragraph_build(&parms, N64_WAD_FONT_ID, text, &nbytes);
+        nbytes = (int)strlen(build_text);
+        layout = rdpq_paragraph_build(&parms, N64_WAD_FONT_ID, build_text, &nbytes);
         if (!layout)
             return;
 
@@ -901,9 +996,10 @@ static void I_DrawBrowserFrame(int cursor,
 
     snprintf(footer,
              sizeof(footer),
-             "WADS: %d  COMPATIBLE: %d",
+             "WADS:%d  IWAD:%d  [Z]%s",
              n64_wad_count,
-             n64_wad_compatible_count);
+             n64_wad_compatible_count,
+             n64_sd_mounted ? "RESCAN SD" : "SCAN SD");
     I_DrawTextSafe(16, 170, 304, N64_STYLE_HINT, footer);
 
     if (selected_entry->compat == N64_WAD_COMPAT_OK)
@@ -939,7 +1035,70 @@ static void I_DrawFallbackFrame(void)
     I_DrawTextSafe(18, 112, 280, N64_STYLE_TEXT, "PRESS A OR START TO CONTINUE");
     I_DrawTextSafe(18, 124, 280, N64_STYLE_HINT, "FALLBACK: rom:/doom.wad");
 
+    I_DrawTextSafe(18, 140, 280, N64_STYLE_TITLE, "PRESS Z TO SCAN SD CARD");
+    I_DrawTextSafe(18, 152, 280, N64_STYLE_HINT, "FINDS .WAD FILES IN ANY SD FOLDER");
+
     I_DrawTextSafe(16, 182, 304, N64_STYLE_HINT, "B ALSO CONTINUES WITH FALLBACK");
+}
+
+static void I_DrawScanningFrame(const char* message)
+{
+    surface_t* disp;
+
+    disp = display_get();
+    rdpq_attach_clear(disp, NULL);
+    I_DrawStaticFrame();
+    I_DrawTextSafe(18, 84, 280, N64_STYLE_TITLE, "SCANNING SD CARD...");
+    I_DrawTextSafe(18, 100, 280, N64_STYLE_HINT,
+                   (message && message[0]) ? message : "READING FILESYSTEM, PLEASE WAIT");
+    rdpq_detach_show();
+}
+
+static void I_DrawLoadingFrame(void)
+{
+    surface_t* disp;
+    char wad_label[96];
+    char base_label[96];
+    char wad_name_clipped[56];
+    char base_name_clipped[56];
+    const char* wad_name;
+    const char* base_name;
+
+    wad_name = I_BaseName(n64_selected_wad);
+    base_name = I_BaseName(n64_selected_base_iwad);
+
+    I_ClipLabel(wad_name_clipped,
+                sizeof(wad_name_clipped),
+                (wad_name && wad_name[0]) ? wad_name : n64_selected_wad,
+                48);
+
+    I_ClipLabel(base_name_clipped,
+                sizeof(base_name_clipped),
+                (base_name && base_name[0]) ? base_name : n64_selected_base_iwad,
+                48);
+
+    snprintf(wad_label,
+             sizeof(wad_label),
+             "WAD: %s",
+             wad_name_clipped);
+
+    snprintf(base_label,
+             sizeof(base_label),
+             "BASE: %s",
+             base_name_clipped);
+
+    disp = display_get();
+    rdpq_attach_clear(disp, NULL);
+    I_DrawStaticFrame();
+    I_DrawTextSafe(18, 82, 280, N64_STYLE_TITLE, "LOADING WAD...");
+    I_DrawTextSafe(18, 96, 280, N64_STYLE_HINT, "PLEASE WAIT");
+    I_DrawTextSafe(18, 114, 280, N64_STYLE_TEXT, wad_label);
+
+    if (I_StrCaseCmp(n64_selected_wad, n64_selected_base_iwad))
+        I_DrawTextSafe(18, 126, 280, N64_STYLE_HINT, base_label);
+
+    I_DrawTextSafe(18, 182, 280, N64_STYLE_HINT, "STARTUP IN PROGRESS");
+    rdpq_detach_show();
 }
 
 static void I_ClampCursorAndPageForCount(int* cursor, int* page, int count)
@@ -1201,6 +1360,49 @@ static int I_RunIwadPickerLoop(int pwad_index)
     }
 }
 
+// User-initiated SD scan from the main selection screen. Preserves the current
+// cursor selection by path across the re-scan so the highlight does not jump.
+static void I_HandleSdScanRequest(int* cursor,
+                                  int* page,
+                                  char* notice,
+                                  size_t notice_size,
+                                  int* notice_ticks)
+{
+    char prev_path[N64_WAD_PATH_LEN];
+    char msg[N64_WAD_TEXT_CACHE_TEXT_MAX];
+    int sd_found;
+    int restored;
+
+    if (cursor && *cursor >= 0 && *cursor < n64_wad_count)
+        I_CopyTruncated(prev_path, sizeof(prev_path), n64_wad_entries[*cursor].path);
+    else
+        prev_path[0] = '\0';
+
+    I_DrawScanningFrame("MOUNTING SD / SEARCHING ALL FOLDERS");
+
+    if (!I_N64TryMountSd())
+    {
+        I_SetRejectNotice(notice, notice_size, notice_ticks,
+                          "SD NOT DETECTED (NEEDS FLASHCART + CARD)");
+        return;
+    }
+
+    I_ScanWadEntries();
+    sd_found = I_CountSdEntries();
+
+    restored = I_FindEntryByPath(prev_path);
+    if (cursor && restored >= 0)
+        *cursor = restored;
+    I_ClampCursorAndPage(cursor, page);
+
+    snprintf(msg, sizeof(msg), "SD SCAN: %d WAD%s FOUND",
+             sd_found, (sd_found == 1) ? "" : "S");
+    I_SetRejectNotice(notice, notice_size, notice_ticks, msg);
+
+    N64_DEBUGF("WAD browser: SD scan done sd_wads=%d total=%d\n",
+               sd_found, n64_wad_count);
+}
+
 static int I_RunSelectionLoop(int* out_base_iwad_index)
 {
     joypad_buttons_t pressed;
@@ -1358,6 +1560,15 @@ static int I_RunSelectionLoop(int* out_base_iwad_index)
                                   "PLAYERS: MAXIMUM IS 4");
         }
 
+        if (input_armed && pressed.z)
+        {
+            I_HandleSdScanRequest(&cursor,
+                                  &page,
+                                  reject_notice_text,
+                                  sizeof(reject_notice_text),
+                                  &reject_notice_ticks);
+        }
+
         if (input_armed && (pressed.a || pressed.start))
         {
             if (n64_wad_entries[cursor].compat == N64_WAD_COMPAT_OK)
@@ -1472,18 +1683,22 @@ static int I_RunSelectionLoop(int* out_base_iwad_index)
     return cursor;
 }
 
-static void I_RunFallbackLoop(void)
+static int I_RunFallbackLoop(void)
 {
     joypad_buttons_t pressed;
     joypad_buttons_t held;
     surface_t* disp;
     bool input_armed;
     int input_arm_timeout;
+    int notice_ticks;
+    char notice[N64_WAD_TEXT_CACHE_TEXT_MAX];
     joypad_port_t active_port;
     joypad_port_t next_port;
 
     input_armed = false;
     input_arm_timeout = 30;
+    notice_ticks = 0;
+    notice[0] = '\0';
     active_port = I_FirstConnectedPort();
 
     for (;;)
@@ -1514,15 +1729,44 @@ static void I_RunFallbackLoop(void)
             }
         }
 
+        if (input_armed && pressed.z)
+        {
+            I_DrawScanningFrame("MOUNTING SD / SEARCHING ALL FOLDERS");
+            if (I_N64TryMountSd())
+            {
+                I_ScanWadEntries();
+                if (n64_wad_count > 0)
+                {
+                    N64_DEBUGF("WAD browser: SD scan from fallback found %d entries\n",
+                               n64_wad_count);
+                    return 1;
+                }
+
+                I_CopyTruncated(notice, sizeof(notice), "SD SCAN: NO WAD FILES FOUND");
+                notice_ticks = 120;
+            }
+            else
+            {
+                I_CopyTruncated(notice, sizeof(notice),
+                                "SD NOT DETECTED (NEEDS FLASHCART + CARD)");
+                notice_ticks = 120;
+            }
+        }
+
         disp = display_get();
         rdpq_attach_clear(disp, NULL);
         I_DrawFallbackFrame();
+        if (notice_ticks > 0)
+        {
+            I_DrawTextSafe(16, 168, 304, N64_STYLE_ERROR, notice);
+            notice_ticks--;
+        }
         rdpq_detach_show();
 
         if (input_armed && (pressed.a || pressed.start || pressed.b))
         {
             N64_DEBUGF("WAD browser: fallback continue with path=%s\n", n64_selected_wad);
-            return;
+            return 0;
         }
     }
 }
@@ -1557,17 +1801,23 @@ void I_N64RunWadBrowser(void)
 
     if (!n64_wad_count)
     {
-        I_RunFallbackLoop();
-        I_CopyTruncated(n64_selected_base_iwad,
-                        sizeof(n64_selected_base_iwad),
-                        n64_selected_wad);
-        N64_DEBUGF("WAD browser: no entries, selected path=%s\n", n64_selected_wad);
-        I_N64LogMemoryStats("wad_browser:before_exit");
-        rspq_wait();
-        I_ShutdownTextRenderer();
-        rdpq_close();
-        I_N64LogMemoryStats("wad_browser:after_exit");
-        return;
+        if (!I_RunFallbackLoop())
+        {
+            I_CopyTruncated(n64_selected_base_iwad,
+                            sizeof(n64_selected_base_iwad),
+                            n64_selected_wad);
+            N64_DEBUGF("WAD browser: no entries, selected path=%s\n", n64_selected_wad);
+            I_DrawLoadingFrame();
+            I_N64LogMemoryStats("wad_browser:before_exit");
+            rspq_wait();
+            I_ShutdownTextRenderer();
+            rdpq_close();
+            I_N64LogMemoryStats("wad_browser:after_exit");
+            return;
+        }
+
+        N64_DEBUGF("WAD browser: SD scan provided %d entries, entering selection\n",
+                   n64_wad_count);
     }
 
     selected_base_iwad_index = -1;
@@ -1608,6 +1858,7 @@ void I_N64RunWadBrowser(void)
                n64_selected_wad,
                n64_selected_base_iwad);
 
+    I_DrawLoadingFrame();
     I_N64LogMemoryStats("wad_browser:before_exit");
     rspq_wait();
     I_ShutdownTextRenderer();

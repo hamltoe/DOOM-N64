@@ -6,7 +6,23 @@ DOOM-N64 is a Windows-friendly porting project for running classic DOOM on the N
 - Builds a Nintendo 64 DOOM ROM on Windows using WSL.
 - Lets you choose IWAD and PWAD files in an in-game WAD browser.
 - Copies all .wad/.WAD files from WADs/ into ROM filesystem during build.
+- Optionally scans an SD card for .wad files at runtime (flashcart required), so you can add WADs without rebuilding the ROM.
 
+## Load WADs From SD Card (No Rebuild)
+
+You can keep .wad files on an SD card and load them at runtime instead of
+baking them into the ROM. This is optional and never runs on its own; you start
+it by pressing Z in the WAD browser.
+
+How to use:
+1. Copy your .wad files anywhere on the SD card (any folder, any depth).
+2. Insert the card into your flashcart and boot Doom-N64.z64.
+3. In the WAD browser, press Z.
+4. The browser scans the whole card and adds every .wad it finds to the list.
+5. Select an IWAD or PWAD to load.
+
+
+## Build Instructions
 
 ## You Need (One-Time)
 
@@ -17,9 +33,8 @@ DOOM-N64 is a Windows-friendly porting project for running classic DOOM on the N
 Toolchain install docs:
 https://github.com/DragonMinded/libdragon/wiki/Installing-libdragon
 
-## Quick Start (5 Minutes)
 
-### 1) Get project
+### Get project
 
 If cloning new:
 
@@ -34,7 +49,7 @@ If already cloned:
 git submodule update --init --recursive
 ```
 
-### 2) Add your WAD files
+### Add your WAD files
 
 Place your legally owned files into the `WADs/` folder.
 
@@ -51,7 +66,7 @@ WADs/DOOM.WAD
 WADs/plutonia.wad
 ```
 
-### 3) Build ROM
+### Build ROM
 
 Fastest in VS Code:
 1. Run Task
@@ -78,7 +93,7 @@ make -j"$(nproc)"
 echo rom_bytes="$(stat -c%s Doom-N64.z64)"
 ```
 
-### 4) Find output
+### Find output
 
 ROM output:
 
@@ -86,7 +101,7 @@ ROM output:
 Doom-N64.z64
 ```
 
-### 5) Launch and play
+### Launch and play
 
 At startup, WAD browser appears:
 - Select IWAD to play base game.
@@ -110,6 +125,8 @@ Load order for mods is always:
 - Left/Right (D-Pad) or C-Up/C-Down: page up/down
 - A or Start: select
 - B: quick launch default IWAD (when available)
+- Z: scan SD card for .wad files (press again to rescan)
+- L/R: adjust local player count
 
 ## Common Problems (Fast Fixes)
 
@@ -142,6 +159,14 @@ Fix:
 - Make sure at least one valid IWAD exists in WADs/.
 - Select PWAD again and choose base IWAD.
 
+### SD NOT DETECTED when pressing Z
+
+Fix:
+- Use a supported flashcart (64Drive, EverDrive-64, ED64Plus, SC64).
+- Insert the SD card before pressing Z.
+- Format the card as FAT16, FAT32, or ExFAT.
+- Plain emulators without flashcart SD emulation cannot scan an SD card.
+
 ## Legal
 
 - Bring your legally owned IWAD/PWAD files.
@@ -149,4 +174,4 @@ Fix:
 
 ## Credits
 
-See Credits.md for acknowledgments and licensing.
+See `Credits.md` for acknowledgments and licensing.

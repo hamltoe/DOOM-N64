@@ -329,11 +329,15 @@ static void I_UpdateLocalWeaponInput(int playernum,
 
     key = 0;
 
-    if (buttons.a && !n64_local_weapon_prev_down[playernum])
+    // Original: A = prev, B = next.  Alt: R = prev, A = next (B is freed for use).
+    boolean prev_btn = (controlScheme == 1) ? buttons.r : buttons.a;
+    boolean next_btn = (controlScheme == 1) ? buttons.a : buttons.b;
+
+    if (prev_btn && !n64_local_weapon_prev_down[playernum])
     {
         key = I_GetDirectionalWeaponKeyForPlayer(playernum, false);
     }
-    else if (buttons.b && !n64_local_weapon_next_down[playernum])
+    else if (next_btn && !n64_local_weapon_next_down[playernum])
     {
         key = I_GetDirectionalWeaponKeyForPlayer(playernum, true);
     }
@@ -341,8 +345,8 @@ static void I_UpdateLocalWeaponInput(int playernum,
     state->weapon_key = key;
 
     n64_local_weapon_cycle_down[playernum] = false;
-    n64_local_weapon_prev_down[playernum] = buttons.a;
-    n64_local_weapon_next_down[playernum] = buttons.b;
+    n64_local_weapon_prev_down[playernum] = prev_btn;
+    n64_local_weapon_next_down[playernum] = next_btn;
 }
 
 static void I_UpdateLocalPlayerInput(int playernum, joypad_port_t port)
@@ -378,6 +382,16 @@ static void I_UpdateLocalPlayerInput(int playernum, joypad_port_t port)
     else if (buttons.d_down)
         state->joy_y = STICK_ANALOG_MAX;
 
+    // Alt scheme: C-Up/C-Down drive forward/back. Override the forward axis
+    // (same as the d-pad) so combining with the stick can't exceed full speed.
+    if (controlScheme == 1)
+    {
+        if (buttons.c_up)
+            state->joy_y = -STICK_ANALOG_MAX;
+        else if (buttons.c_down)
+            state->joy_y = STICK_ANALOG_MAX;
+    }
+
     if (playernum == 0 && menuactive)
     {
         state->joy_x = 0;
@@ -386,12 +400,18 @@ static void I_UpdateLocalPlayerInput(int playernum, joypad_port_t port)
 
     state->strafe_left = buttons.c_left;
     state->strafe_right = buttons.c_right;
-    state->speed = buttons.r;
+    // Alt has no run/walk button; speed follows the alwaysRun default (XOR in g_game).
+    state->speed = (controlScheme == 1) ? false : buttons.r;
 
     if (playernum == 0 && menuactive)
     {
         state->fire = false;
         state->use = false;
+    }
+    else if (controlScheme == 1)
+    {
+        state->fire = buttons.z;	// L is automap in alt
+        state->use = buttons.b;
     }
     else
     {
@@ -568,6 +588,16 @@ void I_StartTic(void)
     else if (buttons.d_down)
         stick_y = -STICK_ANALOG_MAX;
 
+    // Alt scheme: C-Up/C-Down drive forward/back (single-player path).
+    // Override the forward axis so stick + C-Up can't exceed full speed.
+    if (controlScheme == 1 && !menuactive)
+    {
+        if (buttons.c_up)
+            stick_y = STICK_ANALOG_MAX;
+        else if (buttons.c_down)
+            stick_y = -STICK_ANALOG_MAX;
+    }
+
     if (menuactive)
     {
         joy_x = I_MenuAxisStep(stick_x);
@@ -583,22 +613,32 @@ void I_StartTic(void)
 
     I_UpdateKeyState(false, KEYIDX_PAUSE, KEY_PAUSE);
     I_UpdateWeaponCycle(false);
-    I_UpdateWeaponSelect((buttons.a && !menuactive), false, &weapon_prev_down, &weapon_prev_key);
-    I_UpdateWeaponSelect((buttons.b && !menuactive), true, &weapon_next_down, &weapon_next_key);
+    // Weapon cycle: original A=prev / B=next; alt R=prev / A=next (B is Use in alt).
+    boolean wprev = (controlScheme == 1) ? buttons.r : buttons.a;
+    boolean wnext = (controlScheme == 1) ? buttons.a : buttons.b;
+    I_UpdateWeaponSelect((wprev && !menuactive), false, &weapon_prev_down, &weapon_prev_key);
+    I_UpdateWeaponSelect((wnext && !menuactive), true, &weapon_next_down, &weapon_next_key);
 
     I_UpdateKeyState(buttons.start, KEYIDX_MENU, KEY_ESCAPE);
-    I_UpdateKeyState(buttons.c_up, KEYIDX_MAP_TOGGLE, KEY_TAB);
+    // Automap: C-Up on original, L on alt (where C-Up is forward movement).
+    I_UpdateKeyState((controlScheme == 1) ? buttons.l : buttons.c_up,
+                     KEYIDX_MAP_TOGGLE, KEY_TAB);
     // Menu buttons should fire on fresh presses to avoid carry-over from held gameplay inputs.
     I_UpdateKeyState((pressed.a && menuactive), KEYIDX_A_MENU_ENTER, KEY_ENTER);
-    I_UpdateKeyState((buttons.c_down && !menuactive), KEYIDX_A_USE, ' ');
+    // Use: original C-Down, alt B.
+    I_UpdateKeyState((((controlScheme == 1) ? buttons.b : buttons.c_down) && !menuactive),
+                     KEYIDX_A_USE, ' ');
     I_UpdateKeyState((pressed.b && menuactive), KEYIDX_B_MENU_BACK, KEY_BACKSPACE);
     I_UpdateKeyState((menuactive && (pressed.c_down || pressed.r || pressed.y)), KEYIDX_MENU_CONFIRM_Y, 'y');
     I_UpdateKeyState((menuactive && (pressed.z || pressed.x)), KEYIDX_MENU_CONFIRM_N, 'n');
-    I_UpdateKeyState(((buttons.z || buttons.l) && !menuactive), KEYIDX_FIRE, KEY_RCTRL);
+    // Fire: original Z or L; alt Z only (L is automap in alt).
+    I_UpdateKeyState((((controlScheme == 1) ? buttons.z : (buttons.z || buttons.l)) && !menuactive),
+                     KEYIDX_FIRE, KEY_RCTRL);
 
     I_UpdateKeyState(buttons.c_left, KEYIDX_STRAFE_LEFT, ',');
     I_UpdateKeyState(buttons.c_right, KEYIDX_STRAFE_RIGHT, '.');
-    I_UpdateKeyState(buttons.r, KEYIDX_SPEED, KEY_RSHIFT);
+    // Speed (run): original R; alt has no run button (speed follows the alwaysRun default).
+    I_UpdateKeyState(((controlScheme != 1) && buttons.r), KEYIDX_SPEED, KEY_RSHIFT);
 
     for (playernum = 0; playernum < MAXPLAYERS; playernum++)
     {

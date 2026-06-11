@@ -325,8 +325,10 @@ int             joybspeed;
 #define TURBOTHRESHOLD	0x32
 
 fixed_t		forwardmove[2] = {0x19, 0x32}; 
-fixed_t		sidemove[2] = {0x18, 0x28}; 
-fixed_t		angleturn[3] = {640, 1280, 320};	// + slow turn 
+fixed_t		sidemove[2] = {0x18, 0x28};
+fixed_t		angleturn[3] = {640, 1280, 320};	// + slow turn
+int		alwaysRun = 0;		// default movement: 1 = run, 0 = walk
+int		controlScheme = 0;	// N64 controls: 0 = original, 1 = alt
 
 #define SLOWTURNTICS	6 
  
@@ -430,7 +432,7 @@ void G_BuildTiccmd (ticcmd_t* cmd)
  
     strafe = gamekeydown[key_strafe] || mousebuttons[mousebstrafe] 
 	|| joybuttons[joybstrafe]; 
-    speed = gamekeydown[key_speed] || joybuttons[joybspeed];
+    speed = (gamekeydown[key_speed] || joybuttons[joybspeed]) ^ (alwaysRun & 1);
  
     forward = side = 0;
     
@@ -633,7 +635,7 @@ void G_BuildTiccmdN64Local(ticcmd_t* cmd, int playernum, const n64_local_input_t
 
     cmd->consistancy = consistancy[playernum][maketic % BACKUPTICS];
 
-    speed = (input && input->speed) ? 1 : 0;
+    speed = (((input && input->speed) ? 1 : 0) ^ (alwaysRun & 1));
     joyx = input ? input->joy_x : 0;
     joyy = input ? input->joy_y : 0;
 

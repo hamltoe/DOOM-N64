@@ -135,6 +135,9 @@ extern  boolean statusbaractive;
 
 extern  boolean automapactive;	// In AutoMap mode?
 extern  boolean	menuactive;	// Menu overlayed?
+
+extern  int	alwaysRun;	// Default movement: 1 = run, 0 = walk
+extern  int	controlScheme;	// N64 controls: 0 = original, 1 = alt
 extern  boolean	paused;		// Game Pause?
 
 

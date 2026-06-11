@@ -111,7 +111,7 @@ uint64_t I_GetTimeUS(void)
 // Game saves use the Controller Pak; settings live in the cart's EEPROM so they
 // persist without an accessory. Requires N64_ROM_SAVETYPE=eeprom4k in the build.
 
-extern int alwaysRun, controlScheme, frame_interpolation;
+extern int alwaysRun, controlScheme, frame_interpolation, splitOrientation;
 extern int showMessages, detailLevel;
 extern int snd_SfxVolume, snd_MusicVolume, mouseSensitivity;
 
@@ -130,7 +130,9 @@ typedef struct
     int8_t	sfx_volume;
     int8_t	music_volume;
     int8_t	mouse_sens;
-    uint8_t	reserved[3];
+    int8_t	split_orient;	// added in reserved space; old saves read 0 (horizontal)
+    int8_t	widescreen;	// added in reserved space; old saves read 0 (4:3)
+    uint8_t	reserved[1];
 } n64_settings_t;
 
 void I_N64LoadSettings(void)
@@ -152,6 +154,8 @@ void I_N64LoadSettings(void)
     snd_SfxVolume       = s.sfx_volume;
     snd_MusicVolume     = s.music_volume;
     mouseSensitivity    = s.mouse_sens;
+    splitOrientation    = s.split_orient;
+    widescreen          = s.widescreen;
 }
 
 void I_N64SaveSettings(void)
@@ -172,6 +176,8 @@ void I_N64SaveSettings(void)
     s.sfx_volume     = (int8_t)snd_SfxVolume;
     s.music_volume   = (int8_t)snd_MusicVolume;
     s.mouse_sens     = (int8_t)mouseSensitivity;
+    s.split_orient   = (int8_t)splitOrientation;
+    s.widescreen     = (int8_t)widescreen;
 
     eeprom_write_bytes(&s, 0, sizeof(s));
 }

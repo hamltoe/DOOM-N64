@@ -73,6 +73,10 @@ typedef struct
 //
 fixed_t		pspritescale;
 fixed_t		pspriteiscale;
+fixed_t		pspritedrawscale;
+fixed_t		pspritedrawiscale;
+fixed_t		pspritedrawxscale;
+fixed_t		pspritedrawixscale;
 
 lighttable_t**	spritelights;
 
@@ -421,7 +425,7 @@ R_DrawVisSprite
 	    ( (vis->mobjflags & MF_TRANSLATION) >> (MF_TRANSSHIFT-8) );
     }
 	
-    dc_iscale = abs(vis->xiscale)>>detailshift;
+    dc_iscale = abs(vis->yiscale)>>detailshift;
     dc_texturemid = vis->texturemid;
     frac = vis->startfrac;
     spryscale = vis->scale;
@@ -461,7 +465,8 @@ void R_ProjectSprite (mobj_t* thing)
     fixed_t		tz;
 
     fixed_t		xscale;
-    
+    fixed_t		yscale;
+
     int			x1;
     int			x2;
 
@@ -517,10 +522,11 @@ void R_ProjectSprite (mobj_t* thing)
 	return;
     
     xscale = FixedDiv(projection, tz);
-	
-    gxt = -FixedMul(tr_x,viewsin); 
-    gyt = FixedMul(tr_y,viewcos); 
-    tx = -(gyt+gxt); 
+    yscale = FixedDiv(projectiony, tz);
+
+    gxt = -FixedMul(tr_x,viewsin);
+    gyt = FixedMul(tr_y,viewcos);
+    tx = -(gyt+gxt);
 
     // too far off the side?
     if (abs(tx)>(tz<<2))
@@ -573,7 +579,7 @@ void R_ProjectSprite (mobj_t* thing)
     // store information in a vissprite
     vis = R_NewVisSprite ();
     vis->mobjflags = thing->flags;
-    vis->scale = xscale<<detailshift;
+    vis->scale = yscale<<detailshift;
     vis->gx = interp_x;
     vis->gy = interp_y;
     vis->gz = interp_z;
@@ -582,6 +588,10 @@ void R_ProjectSprite (mobj_t* thing)
     vis->x1 = x1 < 0 ? 0 : x1;
     vis->x2 = x2 >= viewwidth ? viewwidth-1 : x2;	
     iscale = FixedDiv (FRACUNIT, xscale);
+
+    // Vertical step from the vertical projection; differs from the
+    // horizontal step only in 16:9 (anamorphic compression).
+    vis->yiscale = FixedDiv (FRACUNIT, yscale);
 
     if (flip)
     {
@@ -618,7 +628,7 @@ void R_ProjectSprite (mobj_t* thing)
     else
     {
 	// diminished light
-	index = xscale>>(LIGHTSCALESHIFT-detailshift);
+	index = yscale>>(LIGHTSCALESHIFT-detailshift);
 
 	if (index >= MAXLIGHTSCALE) 
 	    index = MAXLIGHTSCALE-1;
@@ -714,15 +724,15 @@ void R_DrawPSprite (pspdef_t* psp)
     // calculate edges of the shape
     tx = draw_sx-160*FRACUNIT;
 	
-    tx -= spriteoffset[lump];	
-    x1 = (centerxfrac + FixedMul (tx,pspritescale) ) >>FRACBITS;
+    tx -= spriteoffset[lump];
+    x1 = (centerxfrac + FixedMul (tx,pspritedrawxscale) ) >>FRACBITS;
 
     // off the right side
     if (x1 > viewwidth)
-	return;		
+	return;
 
     tx +=  spritewidth[lump];
-    x2 = ((centerxfrac + FixedMul (tx, pspritescale) ) >>FRACBITS) - 1;
+    x2 = ((centerxfrac + FixedMul (tx, pspritedrawxscale) ) >>FRACBITS) - 1;
 
     // off the left side
     if (x2 < 0)
@@ -733,17 +743,18 @@ void R_DrawPSprite (pspdef_t* psp)
     vis->mobjflags = 0;
     vis->texturemid = (BASEYCENTER<<FRACBITS)+FRACUNIT/2-(draw_sy-spritetopoffset[lump]);
     vis->x1 = x1 < 0 ? 0 : x1;
-    vis->x2 = x2 >= viewwidth ? viewwidth-1 : x2;	
-    vis->scale = pspritescale<<detailshift;
-    
+    vis->x2 = x2 >= viewwidth ? viewwidth-1 : x2;
+    vis->scale = pspritedrawscale<<detailshift;
+    vis->yiscale = pspritedrawiscale;
+
     if (flip)
     {
-	vis->xiscale = -pspriteiscale;
+	vis->xiscale = -pspritedrawixscale;
 	vis->startfrac = spritewidth[lump]-1;
     }
     else
     {
-	vis->xiscale = pspriteiscale;
+	vis->xiscale = pspritedrawixscale;
 	vis->startfrac = 0;
     }
     

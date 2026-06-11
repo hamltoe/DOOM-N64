@@ -263,7 +263,69 @@ V_DrawPatch
 } 
  
 //
-// V_DrawPatchFlipped 
+// V_DrawPatchStretch
+// Like V_DrawPatch but nearest-neighbour scaled by num/den (e.g. 3,2 = 1.5x).
+// Fully bounds-checked so out-of-range glyphs can't corrupt the framebuffer.
+//
+void
+V_DrawPatchStretch
+( int		x,
+  int		y,
+  int		scrn,
+  patch_t*	patch,
+  int		num,
+  int		den )
+{
+    int		col;
+    int		w;
+    column_t*	column;
+    byte*	source;
+    int		i;
+    int		sy;
+    int		dxs, dxe, dys, dye;
+    int		dx, dyp;
+    byte	src;
+
+    x -= (SHORT(patch->leftoffset) * num) / den;
+    y -= (SHORT(patch->topoffset) * num) / den;
+
+    w = SHORT(patch->width);
+
+    for (col = 0; col < w; col++)
+    {
+	column = (column_t *)((byte *)patch + LONG(patch->columnofs[col]));
+	dxs = x + (col * num) / den;
+	dxe = x + ((col + 1) * num) / den;
+
+	while (column->topdelta != 0xff)
+	{
+	    source = (byte *)column + 3;
+	    for (i = 0; i < column->length; i++)
+	    {
+		src = source[i];
+		sy = column->topdelta + i;
+		dys = y + (sy * num) / den;
+		dye = y + ((sy + 1) * num) / den;
+
+		for (dyp = dys; dyp < dye; dyp++)
+		{
+		    if (dyp < 0 || dyp >= SCREENHEIGHT)
+			continue;
+		    for (dx = dxs; dx < dxe; dx++)
+		    {
+			if (dx < 0 || dx >= SCREENWIDTH)
+			    continue;
+			screens[scrn][dyp * SCREENWIDTH + dx] = src;
+		    }
+		}
+	    }
+	    column = (column_t *)((byte *)column + column->length + 4);
+	}
+    }
+}
+
+//
+// V_DrawPatchFlipped
 // Masks a column based masked pic to the screen.
 // Flips horizontally, e.g. to mirror face.
 //

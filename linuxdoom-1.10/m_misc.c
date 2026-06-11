@@ -249,7 +249,9 @@ default_t	defaults[] =
     {"sfx_volume",&snd_SfxVolume, 15},
     {"music_volume",&snd_MusicVolume, 8},
     {"show_messages",&showMessages, 1},
-    
+    {"always_run",&alwaysRun, 0},
+    {"control_scheme",&controlScheme, 0},
+
 
 #if defined(NORMALUNIX) || defined(N64)
     {"key_right",&key_right, KEY_RIGHTARROW},

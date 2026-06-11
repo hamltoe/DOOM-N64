@@ -164,6 +164,7 @@ typedef struct menu_s
     short		x;
     short		y;		// x,y of menu
     short		lastOn;		// last item user was on in menu
+    short		lineheight;	// per-menu row height (0 = default LINEHEIGHT)
 } menu_t;
 
 short		itemOn;			// menu item skull is on
@@ -196,6 +197,8 @@ void M_ChangeSensitivity(int choice);
 void M_SfxVol(int choice);
 void M_MusicVol(int choice);
 void M_ChangeDetail(int choice);
+void M_ChangeMovement(int choice);
+void M_ChangeControls(int choice);
 void M_SizeDisplay(int choice);
 void M_StartGame(int choice);
 void M_Sound(int choice);
@@ -223,6 +226,7 @@ void M_DrawThermo(int x,int y,int thermWidth,int thermDot);
 void M_DrawEmptyCell(menu_t *menu,int item);
 void M_DrawSelCell(menu_t *menu,int item);
 void M_WriteText(int x, int y, char *string);
+void M_WriteTextScaled(int x, int y, char *string, int num, int den);
 int  M_StringWidth(char *string);
 int  M_StringHeight(char *string);
 void M_StartControlPanel(void);
@@ -341,6 +345,8 @@ enum
     endgame,
     messages,
     detail,
+    movement,
+    controls,
     scrnsize,
     option_empty1,
     mousesens,
@@ -349,16 +355,20 @@ enum
     opt_end
 } options_e;
 
+// Labels are drawn as uniform hu_font text by M_DrawOptions (names left empty),
+// so the menu fits above the status bar with a compact per-menu line height.
 menuitem_t OptionsMenu[]=
 {
-    {1,"M_ENDGAM",	M_EndGame,'e'},
-    {1,"M_MESSG",	M_ChangeMessages,'m'},
-    {1,"M_DETAIL",	M_ChangeDetail,'g'},
-    {2,"M_SCRNSZ",	M_SizeDisplay,'s'},
+    {1,"",	M_EndGame,'e'},
+    {1,"",	M_ChangeMessages,'m'},
+    {1,"",	M_ChangeDetail,'g'},
+    {1,"",	M_ChangeMovement,'r'},
+    {1,"",	M_ChangeControls,'c'},
+    {2,"",	M_SizeDisplay,'s'},
     {-1,"",0},
-    {2,"M_MSENS",	M_ChangeSensitivity,'m'},
+    {2,"",	M_ChangeSensitivity,'m'},
     {-1,"",0},
-    {1,"M_SVOL",	M_Sound,'s'}
+    {1,"",	M_Sound,'s'}
 };
 
 menu_t  OptionsDef =
@@ -367,8 +377,9 @@ menu_t  OptionsDef =
     &MainDef,
     OptionsMenu,
     M_DrawOptions,
-    60,37,
-    0
+    60,34,
+    0,
+    13			// compact line height so all 10 rows clear the status bar
 };
 
 //
@@ -956,21 +967,41 @@ char    detailNames[2][9]	= {"M_GDHIGH","M_GDLOW"};
 char	msgNames[2][9]		= {"M_MSGOFF","M_MSGON"};
 
 
+// All option rows are drawn as uniform 1.5x hu_font text: bigger than the raw
+// font (so the toggles read clearly) but smaller than the old graphic patches,
+// at a compact line height that keeps all 10 rows above the status bar.
+#define OPT_SNUM 3
+#define OPT_SDEN 2
+
 void M_DrawOptions(void)
 {
+    int lh = OptionsDef.lineheight;
+    int lx = OptionsDef.x;
+    int vx = OptionsDef.x + 150;		// value column
+
     V_DrawPatchDirect (108,15,0,W_CacheLumpName("M_OPTTTL",PU_CACHE));
-	
-    V_DrawPatchDirect (OptionsDef.x + 175,OptionsDef.y+LINEHEIGHT*detail,0,
-		       W_CacheLumpName(detailNames[detailLevel],PU_CACHE));
 
-    V_DrawPatchDirect (OptionsDef.x + 120,OptionsDef.y+LINEHEIGHT*messages,0,
-		       W_CacheLumpName(msgNames[showMessages],PU_CACHE));
+    M_WriteTextScaled(lx, OptionsDef.y+lh*endgame, "END GAME", OPT_SNUM, OPT_SDEN);
 
-    M_DrawThermo(OptionsDef.x,OptionsDef.y+LINEHEIGHT*(mousesens+1),
-		 10,mouseSensitivity);
-	
-    M_DrawThermo(OptionsDef.x,OptionsDef.y+LINEHEIGHT*(scrnsize+1),
-		 9,screenSize);
+    M_WriteTextScaled(lx, OptionsDef.y+lh*messages, "MESSAGES", OPT_SNUM, OPT_SDEN);
+    M_WriteTextScaled(vx, OptionsDef.y+lh*messages, showMessages ? "ON" : "OFF", OPT_SNUM, OPT_SDEN);
+
+    M_WriteTextScaled(lx, OptionsDef.y+lh*detail, "DETAIL", OPT_SNUM, OPT_SDEN);
+    M_WriteTextScaled(vx, OptionsDef.y+lh*detail, detailLevel ? "LOW" : "HIGH", OPT_SNUM, OPT_SDEN);
+
+    M_WriteTextScaled(lx, OptionsDef.y+lh*movement, "MOVEMENT", OPT_SNUM, OPT_SDEN);
+    M_WriteTextScaled(vx, OptionsDef.y+lh*movement, alwaysRun ? "RUN" : "WALK", OPT_SNUM, OPT_SDEN);
+
+    M_WriteTextScaled(lx, OptionsDef.y+lh*controls, "CONTROLS", OPT_SNUM, OPT_SDEN);
+    M_WriteTextScaled(vx, OptionsDef.y+lh*controls, controlScheme ? "ALT" : "ORIG", OPT_SNUM, OPT_SDEN);
+
+    M_WriteTextScaled(lx, OptionsDef.y+lh*scrnsize, "SCREEN SIZE", OPT_SNUM, OPT_SDEN);
+    M_DrawThermo(lx, OptionsDef.y+lh*(scrnsize+1), 9, screenSize);
+
+    M_WriteTextScaled(lx, OptionsDef.y+lh*mousesens, "MOUSE SENS", OPT_SNUM, OPT_SDEN);
+    M_DrawThermo(lx, OptionsDef.y+lh*(mousesens+1), 10, mouseSensitivity);
+
+    M_WriteTextScaled(lx, OptionsDef.y+lh*soundvol, "SOUND VOLUME", OPT_SNUM, OPT_SDEN);
 }
 
 void M_Options(int choice)
@@ -995,6 +1026,26 @@ void M_ChangeMessages(int choice)
 	players[consoleplayer].message = MSGON ;
 
     message_dontfuckwithme = true;
+}
+
+
+//
+//      Toggle default movement between run and walk
+//
+void M_ChangeMovement(int choice)
+{
+    choice = 0;
+    alwaysRun = 1 - alwaysRun;
+}
+
+
+//
+//      Toggle N64 control scheme between original and alt
+//
+void M_ChangeControls(int choice)
+{
+    choice = 0;
+    controlScheme = 1 - controlScheme;
 }
 
 
@@ -1342,6 +1393,51 @@ M_WriteText
 	    break;
 	V_DrawPatchDirect(cx, cy, 0, hu_font[c]);
 	cx+=w;
+    }
+}
+
+
+//
+//      Write a string using the hu_font, scaled by num/den (e.g. 3,2 = 1.5x)
+//
+void
+M_WriteTextScaled
+( int x, int y, char* string, int num, int den )
+{
+    int		w;
+    char*	ch;
+    int		c;
+    int		cx;
+    int		cy;
+
+    ch = string;
+    cx = x;
+    cy = y;
+
+    while (1)
+    {
+	c = *ch++;
+	if (!c)
+	    break;
+	if (c == '\n')
+	{
+	    cx = x;
+	    cy += (12 * num) / den;
+	    continue;
+	}
+
+	c = toupper(c) - HU_FONTSTART;
+	if (c < 0 || c >= HU_FONTSIZE)
+	{
+	    cx += (4 * num) / den;
+	    continue;
+	}
+
+	w = SHORT (hu_font[c]->width);
+	if (cx + (w * num) / den > SCREENWIDTH)
+	    break;
+	V_DrawPatchStretch(cx, cy, 0, hu_font[c], num, den);
+	cx += (w * num) / den;
     }
 }
 
@@ -1751,6 +1847,7 @@ void M_Drawer (void)
     static short	y;
     short		i;
     short		max;
+    short		lh;
     char		string[40];
     int			start;
 
@@ -1796,18 +1893,19 @@ void M_Drawer (void)
     x = currentMenu->x;
     y = currentMenu->y;
     max = currentMenu->numitems;
+    lh = currentMenu->lineheight ? currentMenu->lineheight : LINEHEIGHT;
 
     for (i=0;i<max;i++)
     {
 	if (currentMenu->menuitems[i].name[0])
 	    V_DrawPatchDirect (x,y,0,
 			       W_CacheLumpName(currentMenu->menuitems[i].name ,PU_CACHE));
-	y += LINEHEIGHT;
+	y += lh;
     }
 
-    
+
     // DRAW SKULL
-    V_DrawPatchDirect(x + SKULLXOFF,currentMenu->y - 5 + itemOn*LINEHEIGHT, 0,
+    V_DrawPatchDirect(x + SKULLXOFF,currentMenu->y - 5 + itemOn*lh, 0,
 		      W_CacheLumpName(skullName[whichSkull],PU_CACHE));
 
 }

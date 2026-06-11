@@ -23,6 +23,7 @@
 #define N64_AUDIO_FREQUENCY     22050
 #define N64_AUDIO_NUM_BUFFERS   4
 #define N64_DEFAULT_SFX_RATE    11025
+#define N64_SFX_MAX_FREQUENCY   48000.0f
 #define N64_MUSIC_CHANNEL_BUDGET 16
 #define N64_MUSIC_PATH_MAX      96
 
@@ -411,6 +412,12 @@ static void N64_ApplyChannelParams(int voice, int vol, int sep, int pitch)
     if (sfx_id > 0 && sfx_id < NUMSFX)
     {
         freq = sfx_cache[sfx_id].wave.frequency * N64_PitchScale(pitch);
+
+        // Some DOOM2 SFX lumps are 22050 Hz, so pitch variance can exceed 22050.
+        // Keep playback within configured SFX channel limits to avoid mixer assert.
+        if (freq > N64_SFX_MAX_FREQUENCY)
+            freq = N64_SFX_MAX_FREQUENCY;
+
         mixer_ch_set_freq(voice, freq);
     }
 }
@@ -2362,7 +2369,7 @@ void I_InitSound(void)
 
     for (i = 0; i < voice_count; i++)
     {
-        mixer_ch_set_limits(i, 8, (float)(N64_DEFAULT_SFX_RATE * 2), 0);
+        mixer_ch_set_limits(i, 8, N64_SFX_MAX_FREQUENCY, 0);
         N64_ClearVoice(i);
     }
 

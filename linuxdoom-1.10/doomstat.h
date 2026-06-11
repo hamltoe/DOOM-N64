@@ -135,6 +135,8 @@ extern  boolean	menuactive;	// Menu overlayed?
 extern  int	alwaysRun;	// Default movement: 1 = run, 0 = walk
 extern  int	controlScheme;	// N64 controls: 0 = original, 1 = alt
 extern  int	frame_interpolation;	// 1 = uncapped/smooth, 0 = capped
+extern  int	splitOrientation;	// 2p split: 0 = horizontal, 1 = vertical
+extern  int	widescreen;	// aspect: 0 = 4:3, 1 = 16:9 (Hor+)
 extern  boolean	tryruntics_nonblocking;	// uncapped render: TryRunTics won't wait
 extern  boolean	paused;		// Game Pause?
 

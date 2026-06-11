@@ -200,6 +200,7 @@ void M_ChangeDetail(int choice);
 void M_ChangeMovement(int choice);
 void M_ChangeControls(int choice);
 void M_ChangeFramerate(int choice);
+void M_ChangeAspect(int choice);
 void M_SizeDisplay(int choice);
 void M_StartGame(int choice);
 void M_Sound(int choice);
@@ -230,6 +231,7 @@ void M_WriteText(int x, int y, char *string);
 void M_WriteTextScaled(int x, int y, char *string, int num, int den);
 void M_WriteTextScaledDim(int x, int y, char *string, int num, int den);
 extern boolean D_LocalMultiplayerEnabled(void);
+extern int D_GetLocalPlayerCount(void);
 int  M_StringWidth(char *string);
 int  M_StringHeight(char *string);
 void M_StartControlPanel(void);
@@ -350,6 +352,7 @@ enum
     detail,
     movement,
     controls,
+    aspect,
     framerate,
     scrnsize,
     option_empty1,
@@ -368,6 +371,7 @@ menuitem_t OptionsMenu[]=
     {1,"",	M_ChangeDetail,'g'},
     {1,"",	M_ChangeMovement,'r'},
     {1,"",	M_ChangeControls,'c'},
+    {1,"",	M_ChangeAspect,'a'},
     {1,"",	M_ChangeFramerate,'f'},
     {2,"",	M_SizeDisplay,'s'},
     {-1,"",0},
@@ -382,9 +386,9 @@ menu_t  OptionsDef =
     &MainDef,
     OptionsMenu,
     M_DrawOptions,
-    60,27,
+    60,23,
     0,
-    12			// compact line height so all 11 rows clear the status bar
+    12			// compact line height so all 12 rows clear the status bar
 };
 
 //
@@ -984,7 +988,7 @@ void M_DrawOptions(void)
     int lx = OptionsDef.x;
     int vx = OptionsDef.x + 150;		// value column
 
-    V_DrawPatchDirect (108,9,0,W_CacheLumpName("M_OPTTTL",PU_CACHE));
+    V_DrawPatchDirect (108,5,0,W_CacheLumpName("M_OPTTTL",PU_CACHE));
 
     M_WriteTextScaled(lx, OptionsDef.y+lh*endgame, "END GAME", OPT_SNUM, OPT_SDEN);
 
@@ -1000,17 +1004,32 @@ void M_DrawOptions(void)
     M_WriteTextScaled(lx, OptionsDef.y+lh*controls, "CONTROLS", OPT_SNUM, OPT_SDEN);
     M_WriteTextScaled(vx, OptionsDef.y+lh*controls, controlScheme ? "ALT" : "ORIG", OPT_SNUM, OPT_SDEN);
 
-    // Interpolation is single-player only; in 2-4p the toggle is greyed out
-    // and locked to CAPPED (the doubled-frame fix still applies there).
-    if (D_LocalMultiplayerEnabled())
+    M_WriteTextScaled(lx, OptionsDef.y+lh*aspect, "ASPECT", OPT_SNUM, OPT_SDEN);
+    M_WriteTextScaled(vx, OptionsDef.y+lh*aspect, widescreen ? "16:9" : "4:3", OPT_SNUM, OPT_SDEN);
+
+    // Context-sensitive row: FRAMERATE in 1p, SPLIT in 2p, greyed in 3-4p.
     {
-	M_WriteTextScaledDim(lx, OptionsDef.y+lh*framerate, "FRAMERATE", OPT_SNUM, OPT_SDEN);
-	M_WriteTextScaledDim(vx, OptionsDef.y+lh*framerate, "CAPPED", OPT_SNUM, OPT_SDEN);
-    }
-    else
-    {
-	M_WriteTextScaled(lx, OptionsDef.y+lh*framerate, "FRAMERATE", OPT_SNUM, OPT_SDEN);
-	M_WriteTextScaled(vx, OptionsDef.y+lh*framerate, frame_interpolation ? "SMOOTH" : "CAPPED", OPT_SNUM, OPT_SDEN);
+	int yrow = OptionsDef.y + lh*framerate;
+	int players = D_GetLocalPlayerCount();
+
+	if (players >= 3)
+	{
+	    // 3-4p: interpolation N/A and the layout is fixed; greyed out.
+	    M_WriteTextScaledDim(lx, yrow, "FRAMERATE", OPT_SNUM, OPT_SDEN);
+	    M_WriteTextScaledDim(vx, yrow, "CAPPED", OPT_SNUM, OPT_SDEN);
+	}
+	else if (players == 2)
+	{
+	    // 2p: choose the split orientation.
+	    M_WriteTextScaled(lx, yrow, "SPLIT", OPT_SNUM, OPT_SDEN);
+	    M_WriteTextScaled(vx, yrow, splitOrientation ? "VERT" : "HOR", OPT_SNUM, OPT_SDEN);
+	}
+	else
+	{
+	    // 1p: choose the framerate mode.
+	    M_WriteTextScaled(lx, yrow, "FRAMERATE", OPT_SNUM, OPT_SDEN);
+	    M_WriteTextScaled(vx, yrow, frame_interpolation ? "SMOOTH" : "CAPPED", OPT_SNUM, OPT_SDEN);
+	}
     }
 
     M_WriteTextScaled(lx, OptionsDef.y+lh*scrnsize, "SCREEN SIZE", OPT_SNUM, OPT_SDEN);
@@ -1072,10 +1091,22 @@ void M_ChangeControls(int choice)
 //
 void M_ChangeFramerate(int choice)
 {
+    int players = D_GetLocalPlayerCount();
+
     choice = 0;
-    if (D_LocalMultiplayerEnabled())
-	return;			// locked to CAPPED in 2-4p (no interpolation)
-    frame_interpolation = 1 - frame_interpolation;
+    if (players >= 3)
+	return;				// 3-4p: nothing to toggle here
+    else if (players == 2)
+	splitOrientation = 1 - splitOrientation;	// 2p: split orientation
+    else
+	frame_interpolation = 1 - frame_interpolation;	// 1p: framerate mode
+}
+
+void M_ChangeAspect(int choice)
+{
+    choice = 0;
+    widescreen = 1 - widescreen;
+    R_SetViewSize (screenblocks, detailLevel);	// rebuild projection tables
 }
 
 

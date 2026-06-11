@@ -252,6 +252,8 @@ default_t	defaults[] =
     {"always_run",&alwaysRun, 0},
     {"control_scheme",&controlScheme, 0},
     {"frame_interpolation",&frame_interpolation, 1},
+    {"split_orientation",&splitOrientation, 0},
+    {"widescreen",&widescreen, 0},
 
 
 #if defined(NORMALUNIX) || defined(N64)

@@ -395,7 +395,10 @@ typedef struct vissprite_s
     fixed_t		scale;
     
     // negative if flipped
-    fixed_t		xiscale;	
+    fixed_t		xiscale;
+
+    // vertical inverse scale (differs from xiscale only for non-4:3 psprites)
+    fixed_t		yiscale;
 
     fixed_t		texturemid;
     int			patch;

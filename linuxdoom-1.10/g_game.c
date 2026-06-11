@@ -328,6 +328,8 @@ fixed_t		angleturn[3] = {640, 1280, 320};	// + slow turn
 int		alwaysRun = 0;		// default movement: 1 = run, 0 = walk
 int		controlScheme = 0;	// N64 controls: 0 = original, 1 = alt
 int		frame_interpolation = 1;	// 1 = uncapped/smooth, 0 = capped
+int		splitOrientation = 0;		// 2p split: 0 = horizontal, 1 = vertical
+int		widescreen = 0;		// aspect: 0 = 4:3, 1 = 16:9 (Hor+)
 
 #define SLOWTURNTICS	6 
  

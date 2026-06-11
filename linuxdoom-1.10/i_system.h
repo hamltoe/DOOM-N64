@@ -44,6 +44,13 @@ byte*	I_ZoneBase (int *size);
 // returns current time in tics.
 int I_GetTime (void);
 
+// Microsecond wall clock for sub-tic interpolation (uncapped framerate).
+unsigned long long I_GetTimeUS (void);
+
+// Settings persistence to cartridge EEPROM.
+void I_N64LoadSettings (void);
+void I_N64SaveSettings (void);
+
 
 //
 // Called by D_DoomLoop,

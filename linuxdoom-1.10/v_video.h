@@ -89,7 +89,8 @@ V_DrawPatchStretch
   int		scrn,
   patch_t*	patch,
   int		num,
-  int		den );
+  int		den,
+  const byte*	trans );
 
 
 // Draw a linear block of pixels into the view buffer.

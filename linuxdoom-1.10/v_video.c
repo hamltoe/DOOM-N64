@@ -274,7 +274,8 @@ V_DrawPatchStretch
   int		scrn,
   patch_t*	patch,
   int		num,
-  int		den )
+  int		den,
+  const byte*	trans )	// optional palette remap (e.g. colormap dim); NULL = none
 {
     int		col;
     int		w;
@@ -315,7 +316,8 @@ V_DrawPatchStretch
 		    {
 			if (dx < 0 || dx >= SCREENWIDTH)
 			    continue;
-			screens[scrn][dyp * SCREENWIDTH + dx] = src;
+			screens[scrn][dyp * SCREENWIDTH + dx] =
+			    trans ? trans[src] : src;
 		    }
 		}
 	    }

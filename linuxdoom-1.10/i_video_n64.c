@@ -543,7 +543,18 @@ void I_N64SplitScreenEndFrame(void)
 
     if (n64_split_player_count <= 2)
     {
-        memset(screens[0] + (SCREENHEIGHT / 2 - 1) * SCREENWIDTH, 0, SCREENWIDTH);
+        if (splitOrientation == 1)
+        {
+            // vertical split: divider down the middle
+            for (y = 0; y < SCREENHEIGHT; y++)
+                for (x = SCREENWIDTH / 2 - 1; x <= SCREENWIDTH / 2; x++)
+                    screens[0][y * SCREENWIDTH + x] = 0;
+        }
+        else
+        {
+            // horizontal split: divider across the middle
+            memset(screens[0] + (SCREENHEIGHT / 2 - 1) * SCREENWIDTH, 0, SCREENWIDTH);
+        }
     }
     else
     {

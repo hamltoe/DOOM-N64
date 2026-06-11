@@ -40,12 +40,19 @@ static const char rcsid[] = "$Id: r_main.c,v 1.5 1997/02/03 22:45:12 b1 Exp $";
 #include "r_local.h"
 #include "r_sky.h"
 
+#include "doomstat.h"
+
 
 
 
 
 // Fineangles in the SCREENWIDTH wide window.
-#define FIELDOFVIEW		2048	
+#define FIELDOFVIEW		2048
+
+// Horizontal projection factor for 16:9 output: the framebuffer is stretched
+// 4:3 -> 16:9 by the display, so render compressed to 3/4 width (Hor+, the
+// vertical FOV is unchanged and the horizontal FOV widens to ~106 degrees).
+#define WIDESCREEN_HSCALE	(FRACUNIT*3/4)
 
 
 
@@ -64,6 +71,7 @@ int			centery;
 fixed_t			centerxfrac;
 fixed_t			centeryfrac;
 fixed_t			projection;
+fixed_t			projectiony;
 
 // just for profiling purposes
 int			framecount;	
@@ -488,7 +496,7 @@ fixed_t R_ScaleFromGlobalAngle (angle_t visangle)
     // both sines are allways positive
     sinea = finesine[anglea>>ANGLETOFINESHIFT];	
     sineb = finesine[angleb>>ANGLETOFINESHIFT];
-    num = FixedMul(projection,sineb)<<detailshift;
+    num = FixedMul(projectiony,sineb)<<detailshift;
     den = FixedMul(rw_distance,sinea);
 
     if (den > num>>16)
@@ -559,7 +567,7 @@ void R_InitTextureMapping (void)
     //
     // Calc focallength
     //  so FIELDOFVIEW angles covers SCREENWIDTH.
-    focallength = FixedDiv (centerxfrac,
+    focallength = FixedDiv (projection,
 			    finetangent[FINEANGLES/4+FIELDOFVIEW/2] );
 	
     for (i=0 ; i<FINEANGLES/2 ; i++)
@@ -707,6 +715,7 @@ void R_ExecuteSetViewSize (void)
 {
     fixed_t	cosadj;
     fixed_t	dy;
+    fixed_t	basefocal;
     int		i;
     int		j;
     int		level;
@@ -740,7 +749,27 @@ void R_ExecuteSetViewSize (void)
     centerx = viewwidth/2;
     centerxfrac = centerx<<FRACBITS;
     centeryfrac = centery<<FRACBITS;
-    projection = centerxfrac;
+
+    // Base focal length. Normal views get the vanilla 90-degree FOV (focal =
+    // half the view width). Split panes are the 1p camera scaled by the
+    // pane's larger relative dimension, cropped on the other axis: a
+    // same-aspect pane (4p quadrant) is an exact miniature of 1p, a
+    // half-width full-height pane (vertical 2p) shows half the tangent
+    // range instead of 90 degrees squeezed into it.
+    basefocal = centerxfrac;
+#ifdef N64
+    if (n64_viewsize_override)
+    {
+	fixed_t ratio = FRACUNIT*scaledviewwidth/SCREENWIDTH;
+	if (ratio < FRACUNIT*viewheight/SCREENHEIGHT)
+	    ratio = FRACUNIT*viewheight/SCREENHEIGHT;
+	basefocal = FixedMul(((SCREENWIDTH/2)<<FRACBITS)>>detailshift, ratio);
+    }
+#endif
+    projection = basefocal;
+    projectiony = basefocal;
+    if (widescreen)
+	projection = FixedMul(basefocal, WIDESCREEN_HSCALE);
 
     if (!detailshift)
     {
@@ -764,6 +793,20 @@ void R_ExecuteSetViewSize (void)
     // psprite scales
     pspritescale = FRACUNIT*viewwidth/SCREENWIDTH;
     pspriteiscale = FRACUNIT*SCREENWIDTH/viewwidth;
+
+    // Weapon draw scale: the larger axis ratio, so a tall pane (vertical
+    // split) draws a full-size weapon instead of a width-keyed half-size
+    // one. Uniform on both axes; the sky keeps using pspriteiscale.
+    pspritedrawscale = (FRACUNIT*viewheight/SCREENHEIGHT) >> detailshift;
+    if (pspritedrawscale < pspritescale)
+	pspritedrawscale = pspritescale;
+    pspritedrawiscale = FixedDiv(FRACUNIT, pspritedrawscale);
+
+    // Weapon horizontal placement/step, compressed like the world in 16:9.
+    pspritedrawxscale = pspritedrawscale;
+    if (widescreen)
+	pspritedrawxscale = FixedMul(pspritedrawscale, WIDESCREEN_HSCALE);
+    pspritedrawixscale = FixedDiv(FRACUNIT, pspritedrawxscale);
     
     // thing clipping
     for (i=0 ; i<viewwidth ; i++)
@@ -774,7 +817,7 @@ void R_ExecuteSetViewSize (void)
     {
 	dy = ((i-viewheight/2)<<FRACBITS)+FRACUNIT/2;
 	dy = abs(dy);
-	yslope[i] = FixedDiv ( (viewwidth<<detailshift)/2*FRACUNIT, dy);
+	yslope[i] = FixedDiv (projectiony<<detailshift, dy);
     }
 	
     for (i=0 ; i<viewwidth ; i++)

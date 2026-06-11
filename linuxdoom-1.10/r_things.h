@@ -47,6 +47,10 @@ extern fixed_t		sprtopscreen;
 
 extern fixed_t		pspritescale;
 extern fixed_t		pspriteiscale;
+extern fixed_t		pspritedrawscale;
+extern fixed_t		pspritedrawiscale;
+extern fixed_t		pspritedrawxscale;
+extern fixed_t		pspritedrawixscale;
 
 
 void R_DrawMaskedColumn (column_t* column);

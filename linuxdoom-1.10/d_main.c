@@ -394,19 +394,41 @@ static void D_N64GetSplitRect(int splitplayers, int view_index, d_n64_split_rect
 
 	if (splitplayers <= 2)
 	{
-	    if (view_index == 0)
+	    if (splitOrientation == 1)
 	    {
-		rect->x = 0;
-		rect->y = 0;
-		rect->w = SCREENWIDTH;
-		rect->h = SCREENHEIGHT / 2;
+		// vertical split: side-by-side panes (160x200 each)
+		if (view_index == 0)
+		{
+		    rect->x = 0;
+		    rect->y = 0;
+		    rect->w = SCREENWIDTH / 2;
+		    rect->h = SCREENHEIGHT;
+		}
+		else if (view_index == 1)
+		{
+		    rect->x = SCREENWIDTH / 2;
+		    rect->y = 0;
+		    rect->w = SCREENWIDTH / 2;
+		    rect->h = SCREENHEIGHT;
+		}
 	    }
-	    else if (view_index == 1)
+	    else
 	    {
-		rect->x = 0;
-		rect->y = SCREENHEIGHT / 2;
-		rect->w = SCREENWIDTH;
-		rect->h = SCREENHEIGHT / 2;
+		// horizontal split: stacked panes (320x100 each)
+		if (view_index == 0)
+		{
+		    rect->x = 0;
+		    rect->y = 0;
+		    rect->w = SCREENWIDTH;
+		    rect->h = SCREENHEIGHT / 2;
+		}
+		else if (view_index == 1)
+		{
+		    rect->x = 0;
+		    rect->y = SCREENHEIGHT / 2;
+		    rect->w = SCREENWIDTH;
+		    rect->h = SCREENHEIGHT / 2;
+		}
 	    }
 	    return;
 	}
@@ -500,8 +522,17 @@ static void D_N64PrepareSplitViewSize(int splitplayers)
 
 	if (splitplayers > 1)
 	{
-	    splitwidth = (splitplayers <= 2) ? SCREENWIDTH : (SCREENWIDTH / 2);
-	    splitheight = SCREENHEIGHT / 2;
+	    if (splitplayers <= 2 && splitOrientation == 1)
+	    {
+		// vertical 2p split: side-by-side panes
+		splitwidth = SCREENWIDTH / 2;
+		splitheight = SCREENHEIGHT;
+	    }
+	    else
+	    {
+		splitwidth = (splitplayers <= 2) ? SCREENWIDTH : (SCREENWIDTH / 2);
+		splitheight = SCREENHEIGHT / 2;
+	    }
 
 	    D_N64EnsureSplitViewSize(splitwidth, splitheight, D_N64SplitDetail(splitplayers));
 	    return;

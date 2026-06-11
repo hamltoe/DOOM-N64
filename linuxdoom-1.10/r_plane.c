@@ -260,8 +260,8 @@ void R_ClearPlanes (void)
     angle = (viewangle-ANG90)>>ANGLETOFINESHIFT;
 	
     // scale will be unit scale at SCREENWIDTH/2 distance
-    basexscale = FixedDiv (finecosine[angle],centerxfrac);
-    baseyscale = -FixedDiv (finesine[angle],centerxfrac);
+    basexscale = FixedDiv (finecosine[angle],projection);
+    baseyscale = -FixedDiv (finesine[angle],projection);
 }
 
 
@@ -461,7 +461,9 @@ void R_DrawPlanes (void)
 	// sky flat
 	if (pl->picnum == skyflatnum)
 	{
-	    dc_iscale = pspriteiscale>>detailshift;
+	    // Vertical sky scale follows the focal length (1:1 texels at the
+	    // fullscreen focal), not the pane width.
+	    dc_iscale = FixedDiv ((SCREENWIDTH/2)<<FRACBITS, projectiony<<detailshift);
 	    
 	    // Sky is allways drawn full bright,
 	    //  i.e. colormaps[0] is used.

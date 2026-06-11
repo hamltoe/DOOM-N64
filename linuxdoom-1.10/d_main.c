@@ -854,16 +854,20 @@ void D_DoomLoop (void)
 	    // shows as a doubled-frame skip. Rendering every vsync means one tic
 	    // spans ~1.7 frames, so no tic is ever skipped. Interpolation (the
 	    // sub-tic lerp) is the separate, optional smoothing on top.
+	    // render_uncapped also covers local 2-4p so the doubled-frame skip
+	    // is fixed there too; only true network games are excluded. The
+	    // sub-tic interpolation stays single-player for now (split-screen
+	    // needs per-viewport handling), so it is gated off for local MP.
 	    boolean render_uncapped =
 		   !singletics
-		&& !netgame
 		&& !demoplayback
 		&& !demorecording
-		&& !D_LocalMultiplayerEnabled()
 		&& !paused
 		&& !menuactive
-		&& gamestate == GS_LEVEL;
-	    boolean interpolate = render_uncapped && frame_interpolation;
+		&& gamestate == GS_LEVEL
+		&& (!netgame || D_LocalMultiplayerEnabled());
+	    boolean interpolate =
+		render_uncapped && frame_interpolation && !D_LocalMultiplayerEnabled();
 
 	    r_interpolate = interpolate;
 	    tryruntics_nonblocking = render_uncapped;

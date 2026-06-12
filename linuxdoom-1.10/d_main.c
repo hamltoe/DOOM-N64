@@ -86,6 +86,9 @@ static const char rcsid[] = "$Id: d_main.c,v 1.8 1997/02/03 22:45:09 b1 Exp $";
 #include "i_main_n64.h"
 #include "n64_debug.h"
 #endif
+#ifdef N64_BENCH
+#include "n64_bench.h"
+#endif
 
 //
 // D-DoomLoop()
@@ -785,11 +788,20 @@ void D_Display (void)
     M_Drawer ();          // menu is drawn even on top of everything
     NetUpdate ();         // send out any new accumulation
 
+#ifdef N64_BENCH
+    N64Bench_DrawOverlay();   // frozen result numbers, drawn over everything
+#endif
 
     // normal update
     if (!wipe)
     {
+#ifdef N64_BENCH
+	N64Bench_PhaseBegin(BPH_PRESENT);
 	I_FinishUpdate ();              // page flip or blit buffer
+	N64Bench_PhaseEnd(BPH_PRESENT);
+#else
+	I_FinishUpdate ();              // page flip or blit buffer
+#endif
 	return;
     }
     
@@ -844,8 +856,12 @@ void D_DoomLoop (void)
     while (1)
     {
 	// frame syncronous IO operations
-	I_StartFrame ();                
-	
+	I_StartFrame ();
+
+#ifdef N64_BENCH
+	N64Bench_LoopBegin();   // brackets the whole iteration (sim+audio+display)
+#endif
+
 	// process one or more tics
 	if (singletics)
 	{
@@ -899,11 +915,28 @@ void D_DoomLoop (void)
 		&& (!netgame || D_LocalMultiplayerEnabled());
 	    boolean interpolate =
 		render_uncapped && frame_interpolation && !D_LocalMultiplayerEnabled();
+#ifdef N64_BENCH
+	    // Bench measures the SHIPPING uncapped+interpolated path; force
+	    // interpolation on regardless of persisted EEPROM settings (which the
+	    // emulator may not carry). singletics/demoplayback are never set here.
+	    if (N64Bench_Active())
+		interpolate = render_uncapped && !D_LocalMultiplayerEnabled();
+#endif
 
 	    r_interpolate = interpolate;
 	    tryruntics_nonblocking = render_uncapped;
 
+#ifdef N64_BENCH
+	    {
+		int bench_pre_gametic = gametic;
+		N64Bench_PhaseBegin(BPH_GAMETIC);
+		TryRunTics (); // non-blocking when uncapped; runs a tic only when due
+		N64Bench_PhaseEnd(BPH_GAMETIC);
+		N64Bench_SetTicsRan(gametic - bench_pre_gametic);
+	    }
+#else
 	    TryRunTics (); // non-blocking when uncapped; runs a tic only when due
+#endif
 
 	    if (interpolate)
 	    {
@@ -942,19 +975,52 @@ void D_DoomLoop (void)
 	    }
 	}
 
-	S_UpdateSounds (players[consoleplayer].mo);// move positional sounds
+	// move positional sounds and expire finished channels: vanilla ran
+	// this once per tic (frames were tic-locked); under the uncapped
+	// renderer it would otherwise run every vsync. gametic advances every
+	// tic even while paused/in menu (TryRunTics blocks there), so gating
+	// on gametic preserves vanilla pause channel-expiry behaviour.
+	{
+	    static int s_sounds_lasttic = -1;
+	    if (gametic != s_sounds_lasttic)
+	    {
+		s_sounds_lasttic = gametic;
+#ifdef N64_BENCH
+		N64Bench_PhaseBegin(BPH_AUDIO);
+		S_UpdateSounds (players[consoleplayer].mo);
+		N64Bench_PhaseEnd(BPH_AUDIO);   // accumulates with post-display audio
+#else
+		S_UpdateSounds (players[consoleplayer].mo);
+#endif
+	    }
+	}
 
 	// Update display, next frame, with current state.
+#ifdef N64_BENCH
+	N64Bench_DisplayBegin();
+	N64Bench_FrameBegin();
+#endif
 	D_Display ();
+#ifdef N64_BENCH
+	N64Bench_FrameEnd();
+	N64Bench_DisplayEnd();
+#endif
 
+#ifdef N64_BENCH
+	N64Bench_PhaseBegin(BPH_AUDIO);
+#endif
 #ifndef SNDSERV
 	// Sound mixing for the buffer is snychronous.
 	I_UpdateSound();
-#endif	
+#endif
 	// Synchronous sound output is explicitly called.
 #ifndef SNDINTR
 	// Update sound output.
 	I_SubmitSound();
+#endif
+#ifdef N64_BENCH
+	N64Bench_PhaseEnd(BPH_AUDIO);
+	N64Bench_LoopEnd();
 #endif
     }
 }
@@ -2012,6 +2078,16 @@ void D_DoomMain (void)
 	G_LoadGame (file);
     }
 	
+
+#ifdef N64_BENCH
+    // Bench mode: auto-start E1M1 on medium skill, no monsters disabled (a
+    // representative scenario), and arm the harness. Bypasses the title loop.
+    startskill = sk_medium;
+    startepisode = 1;
+    startmap = 1;
+    autostart = true;
+    N64Bench_Init();
+#endif
 
     if ( gameaction != ga_loadgame )
     {

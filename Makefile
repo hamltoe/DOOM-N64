@@ -24,6 +24,7 @@ DOOM_SRC = linuxdoom-1.10
 N64_MKDFS_ROOT = filesystem
 
 DEBUG ?= 0
+BENCH ?= 0
 
 ifneq ($(wildcard $(N64_INST)/n64.mk),)
 include $(N64_INST)/n64.mk
@@ -37,6 +38,9 @@ N64_ROM_SAVETYPE = eeprom4k	# cart EEPROM for persisted settings (not the Contro
 CFLAGS += -I$(DOOM_SRC)
 CFLAGS += -IDOOM_N64_Port_Example/src
 CFLAGS += -DDEBUG=$(DEBUG)
+ifeq ($(BENCH),1)
+CFLAGS += -DN64_BENCH=1
+endif
 ifeq ($(strip $(wildcard $(REQUESTED_N64_INST)/mips64-elf/include/ktls.h) $(wildcard $(REQUESTED_N64_INST)/include/ktls.h)),)
 ifneq ($(wildcard $(CURDIR)/libdragon/include/ktls.h),)
 CFLAGS += -I$(CURDIR)/libdragon/include
@@ -113,6 +117,10 @@ DOOM_COMMON_SRCS = \
 	$(DOOM_SRC)/sounds.c \
 	$(DOOM_SRC)/lzfx.c
 
+ifeq ($(BENCH),1)
+DOOM_COMMON_SRCS += $(DOOM_SRC)/n64_bench.c
+endif
+
 DOOM_PLATFORM_SRCS = \
 	$(DOOM_SRC)/i_main_n64.c \
 	$(DOOM_SRC)/i_wad_browser_n64.c \
@@ -123,6 +131,13 @@ DOOM_PLATFORM_SRCS = \
 
 DOOM_SRCS = $(DOOM_COMMON_SRCS) $(DOOM_PLATFORM_SRCS)
 OBJS = $(DOOM_SRCS:%.c=$(BUILD_DIR)/%.o)
+
+# Hot TUs at -O3 (appended after n64.mk's -O2; last -O wins).
+# Renderer (round 1), plus game logic, sound mixer, and MUS synth (round 2).
+$(BUILD_DIR)/$(DOOM_SRC)/r_%.o: CFLAGS += -O3
+$(BUILD_DIR)/$(DOOM_SRC)/p_%.o: CFLAGS += -O3
+$(BUILD_DIR)/$(DOOM_SRC)/i_sound_n64.o: CFLAGS += -O3
+$(BUILD_DIR)/$(DOOM_SRC)/s_sound.o: CFLAGS += -O3
 
 MUSIC_ASSETS_XM_LOWER = $(wildcard assets/music/*.xm)
 MUSIC_ASSETS_XM_UPPER = $(wildcard assets/music/*.XM)

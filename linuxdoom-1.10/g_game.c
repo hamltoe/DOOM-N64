@@ -647,6 +647,18 @@ void G_BuildTiccmdN64Local(ticcmd_t* cmd, int playernum, const n64_local_input_t
 
     cmd->consistancy = consistancy[playernum][maketic % BACKUPTICS];
 
+#if defined(N64_BENCH) && defined(N64_BENCH_MP)
+    // MP bench: scripted movement for every local player. Movement fields
+    // only, so the consistancy assignment above stays intact (the local-MP
+    // consistency check is currently compiled out; the ordering is
+    // defensive).
+    if (N64Bench_Active())
+    {
+        N64Bench_FillTiccmdMP(cmd, playernum);
+        return;
+    }
+#endif
+
     speed = (((input && input->speed) ? 1 : 0) ^ (alwaysRun & 1));
     joyx = input ? input->joy_x : 0;
     joyy = input ? input->joy_y : 0;

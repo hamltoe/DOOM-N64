@@ -82,6 +82,15 @@ void N64Bench_Finish(void);
 // Called at the end of G_BuildTiccmd to overwrite real input with the script.
 void N64Bench_FillTiccmd(ticcmd_t* cmd);
 
+// MP bench: scripted movement fields for one local player (consistancy is
+// left untouched). Player 0 follows the standard table; higher players run
+// it phase-shifted (distinct phase per player) so each pane sees different
+// geometry.
+void N64Bench_FillTiccmdMP(ticcmd_t* cmd, int playernum);
+
+// One-time log that the interpolated render path engaged.
+void N64Bench_NoteInterp(int local_players);
+
 // Drawn at the end of D_Display (over everything) once the bench finishes,
 // holding the final numbers on screen indefinitely for screenshot capture.
 void N64Bench_DrawOverlay(void);

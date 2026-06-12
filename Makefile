@@ -40,6 +40,10 @@ CFLAGS += -IDOOM_N64_Port_Example/src
 CFLAGS += -DDEBUG=$(DEBUG)
 ifeq ($(BENCH),1)
 CFLAGS += -DN64_BENCH=1
+# BENCH_MP=<2|3|4>: scripted local split-screen bench with that many players.
+ifneq ($(BENCH_MP),)
+CFLAGS += -DN64_BENCH_MP=$(BENCH_MP)
+endif
 endif
 ifeq ($(strip $(wildcard $(REQUESTED_N64_INST)/mips64-elf/include/ktls.h) $(wildcard $(REQUESTED_N64_INST)/include/ktls.h)),)
 ifneq ($(wildcard $(CURDIR)/libdragon/include/ktls.h),)

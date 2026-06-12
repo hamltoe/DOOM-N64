@@ -343,6 +343,45 @@ void N64Bench_FillTiccmd(ticcmd_t* cmd)
     cmd->buttons     = step->buttons;
 }
 
+// MP variant: movement fields only, so the caller's consistancy assignment
+// stays intact. Phase-shifting the table per player keeps the panes on
+// different geometry while staying deterministic; the step offset of 3 is
+// coprime with the 10-step table, giving players 0-3 distinct phases
+// (0, 3, 6, 9).
+void N64Bench_FillTiccmdMP(ticcmd_t* cmd, int playernum)
+{
+    const bench_step_t* step;
+
+    if (!bench_started)
+        return;
+
+    cmd->forwardmove = 0;
+    cmd->sidemove    = 0;
+    cmd->angleturn   = 0;
+    cmd->buttons     = 0;
+
+    if (bench_phase == BENCH_DONE)
+        return;                 // hold still after the run completes
+
+    step = &bench_script[(bench_tic_index / BENCH_STEP_TICS
+                          + (unsigned)playernum * 3)
+                         % BENCH_SCRIPT_STEPS];
+    cmd->forwardmove = step->forward;
+    cmd->sidemove    = step->side;
+    cmd->angleturn   = step->turn;
+    cmd->buttons     = step->buttons;
+}
+
+void N64Bench_NoteInterp(int local_players)
+{
+    static int noted;
+
+    if (noted || !bench_started)
+        return;
+    noted = 1;
+    debugf("BENCH: interpolation ACTIVE, local_players=%d\n", local_players);
+}
+
 // Called once per gametic from G_Ticker (via the script counter in FillTiccmd
 // advancing) -- we drive phase transitions off the gametic count so timing is
 // in emulated game time, not host or rendered-frame time.

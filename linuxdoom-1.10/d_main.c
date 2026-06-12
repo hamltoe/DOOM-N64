@@ -629,7 +629,16 @@ void D_Display (void)
 	if (!gametic)
 	    break;
 	if (automapactive)
+	{
 	    AM_Drawer ();
+	    // Split mode has no status bar covering the bottom 32 rows that
+	    // AM_clearFB leaves undrawn; clear them (palette 0 = the automap
+	    // background) so the ping-pong buffers don't flicker stale pane
+	    // pixels there.
+	    if (splitplayers > 1)
+		memset (screens[0] + (SCREENHEIGHT-32)*SCREENWIDTH, 0,
+			32*SCREENWIDTH);
+	}
 	if (wipe || (viewheight != 200 && fullscreen) )
 	    redrawsbar = true;
 	if (inhelpscreensstate && !inhelpscreens)
@@ -903,8 +912,10 @@ void D_DoomLoop (void)
 	    // sub-tic lerp) is the separate, optional smoothing on top.
 	    // render_uncapped also covers local 2-4p so the doubled-frame skip
 	    // is fixed there too; only true network games are excluded. The
-	    // sub-tic interpolation stays single-player for now (split-screen
-	    // needs per-viewport handling), so it is gated off for local MP.
+	    // sub-tic interpolation works per pane in split-screen as well:
+	    // each R_RenderPlayerView lerps from its own player's snapshots
+	    // (P_PlayerThink snapshots every playeringame player), all panes
+	    // sharing one fractionaltic.
 	    boolean render_uncapped =
 		   !singletics
 		&& !demoplayback
@@ -913,14 +924,17 @@ void D_DoomLoop (void)
 		&& !menuactive
 		&& gamestate == GS_LEVEL
 		&& (!netgame || D_LocalMultiplayerEnabled());
-	    boolean interpolate =
-		render_uncapped && frame_interpolation && !D_LocalMultiplayerEnabled();
+	    boolean interpolate = render_uncapped && frame_interpolation;
 #ifdef N64_BENCH
 	    // Bench measures the SHIPPING uncapped+interpolated path; force
 	    // interpolation on regardless of persisted EEPROM settings (which the
 	    // emulator may not carry). singletics/demoplayback are never set here.
 	    if (N64Bench_Active())
-		interpolate = render_uncapped && !D_LocalMultiplayerEnabled();
+	    {
+		interpolate = render_uncapped;
+		if (interpolate)
+		    N64Bench_NoteInterp(D_GetLocalPlayerCount());
+	    }
 #endif
 
 	    r_interpolate = interpolate;
@@ -2086,16 +2100,25 @@ void D_DoomMain (void)
     startepisode = 1;
     startmap = 1;
     autostart = true;
+#ifdef N64_BENCH_MP
+    // MP bench: scripted local split-screen with N64_BENCH_MP players.
+    D_SetLocalPlayerCount(N64_BENCH_MP);
+#endif
     N64Bench_Init();
 #endif
 
     if ( gameaction != ga_loadgame )
     {
+#if defined(N64_BENCH) && defined(N64_BENCH_MP)
+	// MP bench starts deferred so G_DoNewGame runs the local-multiplayer
+	// expansion (netgame, playeringame[], doomcom nodes).
+	G_DeferedInitNew (startskill, startepisode, startmap);
+#else
 	if (autostart || netgame)
 	    G_InitNew (startskill, startepisode, startmap);
 	else
 	    D_StartTitle ();                // start up intro loop
-
+#endif
     }
 
     D_DoomLoop ();  // never returns

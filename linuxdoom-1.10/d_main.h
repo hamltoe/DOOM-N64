@@ -38,6 +38,9 @@ extern char*		wadfiles[MAXWADFILES];
 
 void D_AddFile (char *file);
 
+// Count DOOM 1 style episodes (ExMy) present in the loaded WAD set.
+void D_DetectEpisodes (void);
+
 
 
 //

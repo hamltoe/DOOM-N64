@@ -101,6 +101,8 @@ void	G_DoCompleted (void);
 void	G_DoVictory (void); 
 void	G_DoWorldDone (void); 
 void	G_DoSaveGame (void); 
+
+static int G_EpisodeSkyTexture (int episode);
  
  
 gameaction_t    gameaction; 
@@ -734,6 +736,13 @@ void G_DoLoadLevel (void)
 	else
 	    if (gamemap < 21)
 		skytexture = R_TextureNumForName ("SKY2");
+    }
+    else
+    {
+	// DOOM 1 style episodes (covers extra episodes such as SIGIL's
+	// episode 5 -> SKY5); also fixes sky on save-game loads which do
+	// not pass through G_InitNew.
+	skytexture = G_EpisodeSkyTexture (gameepisode);
     }
 
     levelstarttic = gametic;        // for time calculation
@@ -1377,6 +1386,10 @@ void G_DoCompleted (void)
 	      case 4:
 		wminfo.next = 2;
 		break;
+	      case 5:
+		// SIGIL: secret level E5M9 returns to E5M7.
+		wminfo.next = 6;
+		break;
 	    }                
 	} 
 	else 
@@ -1389,8 +1402,13 @@ void G_DoCompleted (void)
     wminfo.maxfrags = 0; 
     if ( gamemode == commercial )
 	wminfo.partime = 35*cpars[gamemap-1]; 
-    else
+    else if (gameepisode >= 1 && gameepisode <= 3
+	     && gamemap >= 1 && gamemap <= 9)
 	wminfo.partime = 35*pars[gameepisode][gamemap]; 
+    else
+	// No par time defined for this episode/map (e.g. episode 4+,
+	// SIGIL's episode 5); pars[][] only covers episodes 1-3.
+	wminfo.partime = 0;
     wminfo.pnum = consoleplayer; 
  
     for (i=0 ; i<MAXPLAYERS ; i++) 
@@ -1909,6 +1927,44 @@ void G_DoNewGame (void)
 extern  int	skytexture; 
 
 
+//
+// G_EpisodeSkyTexture
+// Resolve the sky texture name for a DOOM 1 style episode. Episodes 1-4
+// use the stock SKY1-SKY4; extra episodes (e.g. SIGIL's episode 5 uses
+// SKY5) resolve SKY<episode> when present, falling back to SKY1.
+//
+static int G_EpisodeSkyTexture (int episode)
+{
+    char	skyname[9];
+    int		tex;
+
+    switch (episode)
+    {
+      case 1: return R_TextureNumForName ("SKY1");
+      case 2: return R_TextureNumForName ("SKY2");
+      case 3: return R_TextureNumForName ("SKY3");
+      case 4: return R_TextureNumForName ("SKY4");
+      default:
+	break;
+    }
+
+    if (episode >= 5 && episode <= 9)
+    {
+	skyname[0] = 'S';
+	skyname[1] = 'K';
+	skyname[2] = 'Y';
+	skyname[3] = (char)('0' + episode);
+	skyname[4] = 0;
+
+	tex = R_CheckTextureNumForName (skyname);
+	if (tex >= 0)
+	    return tex;
+    }
+
+    return R_TextureNumForName ("SKY1");
+}
+
+
 void
 G_InitNew
 ( skill_t	skill,
@@ -1936,8 +1992,11 @@ G_InitNew
 
     if ( gamemode == retail )
     {
-      if (episode > 4)
-	episode = 4;
+      // Allow extra episodes detected in the loaded WAD set (e.g. SIGIL
+      // adds a 5th episode); fall back to the stock four otherwise.
+      int maxepisode = (d_episodes > 4) ? d_episodes : 4;
+      if (episode > maxepisode)
+	episode = maxepisode;
     }
     else if ( gamemode == shareware )
     {
@@ -2023,6 +2082,9 @@ G_InitNew
 	    break; 
 	  case 4:	// Special Edition sky
 	    skytexture = R_TextureNumForName ("SKY4");
+	    break;
+	  default:	// extra episodes (e.g. SIGIL E5 uses SKY5)
+	    skytexture = G_EpisodeSkyTexture (episode);
 	    break;
 	} 
  

@@ -49,8 +49,13 @@ planefunction_t		ceilingfunc;
 //
 
 // Here comes the obnoxious "visplane".
+// Limit-removing: the visplane pool is allocated dynamically and grown on
+// demand (see R_GrowVisplanes) instead of a fixed MAXVISPLANES array, so
+// detailed PWAD maps (e.g. SIGIL) no longer trip "no more visplanes".
+// MAXVISPLANES is just the initial capacity / growth quantum.
 #define MAXVISPLANES	128
-visplane_t		visplanes[MAXVISPLANES];
+visplane_t*		visplanes;
+int			numvisplanes;	// current allocated capacity
 visplane_t*		lastvisplane;
 visplane_t*		floorplane;
 visplane_t*		ceilingplane;
@@ -100,7 +105,51 @@ fixed_t			cachedystep[SCREENHEIGHT];
 //
 void R_InitPlanes (void)
 {
-  // Doh!
+    // Allocate the initial visplane pool. It is grown on demand by
+    // R_GrowVisplanes, and persists across levels / browser relaunches
+    // (so this only allocates once).
+    if (!visplanes)
+    {
+	numvisplanes = MAXVISPLANES;
+	visplanes = (visplane_t*) malloc (numvisplanes * sizeof(*visplanes));
+	if (!visplanes)
+	    I_Error ("R_InitPlanes: failed to allocate %d visplanes",
+		     numvisplanes);
+    }
+}
+
+
+//
+// R_GrowVisplanes
+// Doubles the visplane pool when it is exhausted mid-frame. Because the
+// engine holds several live visplane_t* (lastvisplane, floorplane,
+// ceilingplane), the array base can move on realloc, so those globals are
+// re-based by the same element offset. Local visplane_t* held by callers
+// must be re-based by the caller (see R_FindPlane / R_CheckPlane).
+//
+static void R_GrowVisplanes (void)
+{
+    int		lastoff;
+    int		flooroff;
+    int		ceiloff;
+    int		newmax;
+    visplane_t*	newplanes;
+
+    lastoff  = (int)(lastvisplane - visplanes);
+    flooroff = floorplane   ? (int)(floorplane   - visplanes) : -1;
+    ceiloff  = ceilingplane ? (int)(ceilingplane - visplanes) : -1;
+
+    newmax = numvisplanes ? numvisplanes * 2 : MAXVISPLANES;
+    newplanes = (visplane_t*) realloc (visplanes, newmax * sizeof(*visplanes));
+    if (!newplanes)
+	I_Error ("R_GrowVisplanes: failed to grow to %d visplanes", newmax);
+
+    visplanes = newplanes;
+    numvisplanes = newmax;
+
+    lastvisplane = visplanes + lastoff;
+    floorplane   = (flooroff >= 0) ? (visplanes + flooroff) : NULL;
+    ceilingplane = (ceiloff  >= 0) ? (visplanes + ceiloff)  : NULL;
 }
 
 
@@ -242,9 +291,10 @@ R_FindPlane
     if (check < lastvisplane)
 	return check;
 		
-    if (lastvisplane - visplanes == MAXVISPLANES)
-	I_Error ("R_FindPlane: no more visplanes");
-		
+    if (lastvisplane - visplanes == numvisplanes)
+	R_GrowVisplanes ();	// limit-removing: grow instead of I_Error
+
+    check = lastvisplane;	// re-base after a possible array move
     lastvisplane++;
 
     check->height = height;
@@ -310,6 +360,13 @@ R_CheckPlane
     }
 	
     // make a new visplane
+    if (lastvisplane - visplanes == numvisplanes)
+    {
+	int ploff = (int)(pl - visplanes);
+	R_GrowVisplanes ();	// limit-removing: grow instead of overflow
+	pl = visplanes + ploff;	// re-base caller's plane after a move
+    }
+
     lastvisplane->height = pl->height;
     lastvisplane->picnum = pl->picnum;
     lastvisplane->lightlevel = pl->lightlevel;
@@ -377,7 +434,7 @@ void R_DrawPlanes (void)
 	I_Error ("R_DrawPlanes: drawsegs overflow (%i)",
 		 ds_p - drawsegs);
     
-    if (lastvisplane - visplanes > MAXVISPLANES)
+    if (lastvisplane - visplanes > numvisplanes)
 	I_Error ("R_DrawPlanes: visplane overflow (%i)",
 		 lastvisplane - visplanes);
     

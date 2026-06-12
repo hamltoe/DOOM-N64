@@ -91,6 +91,48 @@ boolean F_CastResponder (event_t *ev);
 void	F_CastDrawer (void);
 
 //
+// F_LoadEpisodeText
+// Load an extra episode's finale text lump (E<n>TEXT) from the WAD into a
+// static, null-terminated buffer. Used for PWAD episodes such as SIGIL's
+// episode 5 (E5TEXT). Returns NULL when the lump is absent.
+//
+static char* F_LoadEpisodeText (int episode)
+{
+    static char	textbuf[1024];
+    char	lumpname[9];
+    int		lump;
+    int		length;
+    char*	src;
+
+    if (episode < 5 || episode > 9)
+	return NULL;
+
+    lumpname[0] = 'E';
+    lumpname[1] = (char)('0' + episode);
+    lumpname[2] = 'T';
+    lumpname[3] = 'E';
+    lumpname[4] = 'X';
+    lumpname[5] = 'T';
+    lumpname[6] = 0;
+
+    lump = W_CheckNumForName (lumpname);
+    if (lump < 0)
+	return NULL;
+
+    length = W_LumpLength (lump);
+    if (length <= 0)
+	return NULL;
+    if (length > (int)sizeof(textbuf) - 1)
+	length = (int)sizeof(textbuf) - 1;
+
+    src = (char*)W_CacheLumpNum (lump, PU_CACHE);
+    memcpy (textbuf, src, length);
+    textbuf[length] = 0;
+
+    return textbuf;
+}
+
+//
 // F_StartFinale
 //
 void F_StartFinale (void)
@@ -132,8 +174,14 @@ void F_StartFinale (void)
 	    finaletext = e4text;
 	    break;
 	  default:
-	    // Ouch.
+	  {
+	    // Extra episodes added by PWADs (e.g. SIGIL episode 5).
+	    // Pull the finale text from E<n>TEXT when present.
+	    char* eptext = F_LoadEpisodeText (gameepisode);
+	    finaleflat = "MFLR8_3";
+	    finaletext = eptext ? eptext : e1text;
 	    break;
+	  }
 	}
 	break;
       }
@@ -729,6 +777,12 @@ void F_Drawer (void)
 	  case 4:
 	    V_DrawPatch (0,0,0,
 			 W_CacheLumpName("ENDPIC",PU_CACHE));
+	    break;
+	  default:
+	    // Extra episodes (e.g. SIGIL episode 5): show the CREDIT
+	    // screen, which both the base IWAD and SIGIL provide.
+	    V_DrawPatch (0,0,0,
+			 W_CacheLumpName("CREDIT",PU_CACHE));
 	    break;
 	}
     }

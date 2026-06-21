@@ -21,6 +21,12 @@
 #include "i_wad_browser_n64.h"
 #include "n64_debug.h"
 
+#ifndef DOOM_N64_PROJECT_VERSION
+#define DOOM_N64_PROJECT_VERSION "dev"
+#endif
+
+#define N64_BROWSER_TITLE_TEXT "DOOM N64 v" DOOM_N64_PROJECT_VERSION
+
 #define N64_WAD_MAX_ENTRIES 128
 #define N64_WAD_PATH_LEN 256
 #define N64_WAD_NAME_LEN 64
@@ -57,10 +63,11 @@ enum
 
 enum
 {
-    N64_WAD_COMPAT_OK = 0,
-    N64_WAD_COMPAT_NOT_IWAD = 1,
-    N64_WAD_COMPAT_CORRUPT = 2,
-    N64_WAD_COMPAT_OPEN_FAILED = 3
+    // Classification of WAD role/validity used by browser selection logic.
+    N64_WAD_TYPE_IWAD = 0,
+    N64_WAD_TYPE_PWAD = 1,
+    N64_WAD_TYPE_INVALID = 2,
+    N64_WAD_TYPE_UNREADABLE = 3
 };
 
 typedef struct n64_wad_entry_s
@@ -68,7 +75,7 @@ typedef struct n64_wad_entry_s
     char path[N64_WAD_PATH_LEN];
     char name[N64_WAD_NAME_LEN];
     int64_t size_bytes;
-    int compat;
+    int wad_type;
 } n64_wad_entry_t;
 
 typedef struct n64_save_entry_s
@@ -80,7 +87,7 @@ typedef struct n64_save_entry_s
 
 static n64_wad_entry_t n64_wad_entries[N64_WAD_MAX_ENTRIES];
 static int n64_wad_count;
-static int n64_wad_compatible_count;
+static int n64_wad_iwad_count;
 static n64_save_entry_t n64_save_entries[N64_SAVE_MAX_ENTRIES];
 static int n64_save_count;
 static char n64_selected_wad[N64_WAD_PATH_LEN] = "rom:/doom.wad";
@@ -380,30 +387,30 @@ static uint32_t I_ReadLE32(const uint8_t* p)
          | ((uint32_t)p[3] << 24);
 }
 
-static const char* I_CompatTag(int compat)
+static const char* I_WadTypeTag(int wad_type)
 {
-    switch (compat)
+    switch (wad_type)
     {
-        case N64_WAD_COMPAT_OK:
+        case N64_WAD_TYPE_IWAD:
             return "IWAD";
-        case N64_WAD_COMPAT_NOT_IWAD:
+        case N64_WAD_TYPE_PWAD:
             return "PWAD";
-        case N64_WAD_COMPAT_CORRUPT:
+        case N64_WAD_TYPE_INVALID:
             return "BAD";
         default:
             return "ERR";
     }
 }
 
-static const char* I_CompatMessage(int compat)
+static const char* I_WadTypeMessage(int wad_type)
 {
-    switch (compat)
+    switch (wad_type)
     {
-        case N64_WAD_COMPAT_NOT_IWAD:
+        case N64_WAD_TYPE_PWAD:
             return "PWAD: PRESS A TO CHOOSE BASE IWAD";
-        case N64_WAD_COMPAT_CORRUPT:
+        case N64_WAD_TYPE_INVALID:
             return "NOT COMPATIBLE: IWAD HEADER OR DIRECTORY INVALID";
-        case N64_WAD_COMPAT_OPEN_FAILED:
+        case N64_WAD_TYPE_UNREADABLE:
             return "NOT COMPATIBLE: FAILED TO READ FILE";
         default:
             return "NOT COMPATIBLE";
@@ -425,7 +432,7 @@ static void I_SetRejectNotice(char* text,
     *ticks = 90;
 }
 
-static int I_ClassifyWadCompatibility(const char* path, int64_t size_bytes)
+static int I_DetectWadType(const char* path, int64_t size_bytes)
 {
     int fd;
     int bytes_read;
@@ -439,11 +446,11 @@ static int I_ClassifyWadCompatibility(const char* path, int64_t size_bytes)
     off_t file_end;
 
     if (!path || !path[0])
-        return N64_WAD_COMPAT_OPEN_FAILED;
+        return N64_WAD_TYPE_UNREADABLE;
 
     fd = open(path, O_RDONLY | O_BINARY);
     if (fd < 0)
-        return N64_WAD_COMPAT_OPEN_FAILED;
+        return N64_WAD_TYPE_UNREADABLE;
 
     if (size_bytes < 0)
     {
@@ -465,38 +472,38 @@ static int I_ClassifyWadCompatibility(const char* path, int64_t size_bytes)
     if (size_bytes >= 0 && size_bytes < (int64_t)sizeof(header))
     {
         close(fd);
-        return N64_WAD_COMPAT_CORRUPT;
+        return N64_WAD_TYPE_INVALID;
     }
 
     bytes_read = (int)read(fd, header, sizeof(header));
     close(fd);
 
     if (bytes_read != (int)sizeof(header))
-        return N64_WAD_COMPAT_OPEN_FAILED;
+        return N64_WAD_TYPE_UNREADABLE;
 
     is_iwad = (header[0] == 'I' && header[1] == 'W' && header[2] == 'A' && header[3] == 'D');
     is_pwad = (header[0] == 'P' && header[1] == 'W' && header[2] == 'A' && header[3] == 'D');
 
     if (!is_iwad && !is_pwad)
-        return N64_WAD_COMPAT_CORRUPT;
+        return N64_WAD_TYPE_INVALID;
 
     numlumps = I_ReadLE32(header + 4);
     infotableofs = I_ReadLE32(header + 8);
 
     if (!numlumps)
-        return N64_WAD_COMPAT_CORRUPT;
+        return N64_WAD_TYPE_INVALID;
 
     if (size_bytes >= 0)
     {
         dir_end = (uint64_t)infotableofs + (uint64_t)numlumps * 16ULL;
         if (dir_end > (uint64_t)size_bytes)
-            return N64_WAD_COMPAT_CORRUPT;
+            return N64_WAD_TYPE_INVALID;
     }
 
     if (is_iwad)
-        return N64_WAD_COMPAT_OK;
+        return N64_WAD_TYPE_IWAD;
 
-    return N64_WAD_COMPAT_NOT_IWAD;
+    return N64_WAD_TYPE_PWAD;
 }
 
 static int I_WadPriority(const char* name)
@@ -670,10 +677,10 @@ static int I_WadScanCallback(const char* fn, dir_t* dir, void* data)
     I_CopyTruncated(entry->path, sizeof(entry->path), fn);
     I_CopyTruncated(entry->name, sizeof(entry->name), name);
     entry->size_bytes = dir->d_size;
-    entry->compat = I_ClassifyWadCompatibility(fn, dir->d_size);
+    entry->wad_type = I_DetectWadType(fn, dir->d_size);
 
-    if (entry->compat == N64_WAD_COMPAT_OK)
-        n64_wad_compatible_count++;
+    if (entry->wad_type == N64_WAD_TYPE_IWAD)
+        n64_wad_iwad_count++;
 
     n64_wad_count++;
 
@@ -729,7 +736,7 @@ static void I_ScanWadEntries(void)
     int i;
 
     n64_wad_count = 0;
-    n64_wad_compatible_count = 0;
+    n64_wad_iwad_count = 0;
     memset(n64_wad_entries, 0, sizeof(n64_wad_entries));
 
     dir_walk("rom:/", I_WadScanCallback, NULL);
@@ -747,16 +754,16 @@ static void I_ScanWadEntries(void)
               I_CompareWadEntry);
     }
 
-    N64_DEBUGF("WAD browser: found %d .wad entries (%d compatible)\n",
+    N64_DEBUGF("WAD browser: found %d .wad entries (%d IWAD)\n",
                n64_wad_count,
-               n64_wad_compatible_count);
+               n64_wad_iwad_count);
     for (i = 0; i < n64_wad_count; i++)
     {
         N64_DEBUGF("  [%02d] %s (%lld bytes, %s)\n",
                    i,
                    n64_wad_entries[i].path,
                    (long long)n64_wad_entries[i].size_bytes,
-                   I_CompatTag(n64_wad_entries[i].compat));
+                   I_WadTypeTag(n64_wad_entries[i].wad_type));
     }
 }
 
@@ -783,20 +790,20 @@ static int I_FindDefaultEntry(void)
     for (i = 0; i < n64_wad_count; i++)
     {
         if (!I_StrCaseCmp(n64_wad_entries[i].name, "doom.wad")
-            && n64_wad_entries[i].compat == N64_WAD_COMPAT_OK)
+            && n64_wad_entries[i].wad_type == N64_WAD_TYPE_IWAD)
             return i;
     }
 
     return -1;
 }
 
-static int I_FindFirstCompatibleEntry(void)
+static int I_FindFirstIwadEntry(void)
 {
     int i;
 
     for (i = 0; i < n64_wad_count; i++)
     {
-        if (n64_wad_entries[i].compat == N64_WAD_COMPAT_OK)
+        if (n64_wad_entries[i].wad_type == N64_WAD_TYPE_IWAD)
             return i;
     }
 
@@ -1112,7 +1119,7 @@ static void I_DrawStaticFrame(void)
     I_FillRect(10, 50, 1, 112, col_border);
     I_FillRect(309, 50, 1, 112, col_border);
 
-    I_DrawTextSafe(18, 0, 152, N64_STYLE_TITLE, "DOOM N64");
+    I_DrawTextSafe(18, 0, 152, N64_STYLE_TITLE, N64_BROWSER_TITLE_TEXT);
     I_DrawTextSafe(18, 12, 152, N64_STYLE_SUBTITLE, "SELECT WAD");
 
     I_DrawTextSafe(166, -4, 152, N64_STYLE_HINT, "D-PAD: MOVE");
@@ -1126,7 +1133,7 @@ static void I_DrawEntryRow(int row, int entry_index, int selected)
 {
     char label[32];
     char size_label[16];
-    const char* compat_tag;
+    const char* type_tag;
     int x;
     int y;
     int style;
@@ -1145,7 +1152,9 @@ static void I_DrawEntryRow(int row, int entry_index, int selected)
     style = selected ? N64_STYLE_SELECTED : N64_STYLE_TEXT;
     I_DrawTextSafe(x, y, 222, style, label);
 
-    if (entry->compat == N64_WAD_COMPAT_OK && entry->size_bytes >= 0)
+    if (!I_HasSdPrefix(entry->path)
+        && entry->wad_type == N64_WAD_TYPE_IWAD
+        && entry->size_bytes >= 0)
     {
         size_kib = (unsigned long)((entry->size_bytes + 1023) / 1024);
         snprintf(size_label, sizeof(size_label), "%5luK", size_kib);
@@ -1153,15 +1162,16 @@ static void I_DrawEntryRow(int row, int entry_index, int selected)
     }
     else
     {
-        int compat_style;
+        int type_style;
 
-        compat_tag = I_CompatTag(entry->compat);
-        if (entry->compat == N64_WAD_COMPAT_NOT_IWAD)
-            compat_style = selected ? N64_STYLE_SELECTED : N64_STYLE_HINT;
+        type_tag = I_WadTypeTag(entry->wad_type);
+        if (entry->wad_type == N64_WAD_TYPE_IWAD
+            || entry->wad_type == N64_WAD_TYPE_PWAD)
+            type_style = selected ? N64_STYLE_SELECTED : N64_STYLE_HINT;
         else
-            compat_style = N64_STYLE_ERROR;
+            type_style = N64_STYLE_ERROR;
 
-        I_DrawTextSafe(248, y, 62, compat_style, compat_tag);
+        I_DrawTextSafe(248, y, 62, type_style, type_tag);
     }
 }
 
@@ -1222,21 +1232,21 @@ static void I_DrawBrowserFrame(int cursor,
              sizeof(footer),
              "WADS:%d  IWAD:%d  [Z]%s [C-R]SAVES",
              n64_wad_count,
-             n64_wad_compatible_count,
+             n64_wad_iwad_count,
              n64_sd_mounted ? "RESCAN SD" : "SCAN SD");
     I_DrawTextSafe(16, 170, 304, N64_STYLE_HINT, footer);
 
-    if (selected_entry->compat == N64_WAD_COMPAT_OK)
+    if (selected_entry->wad_type == N64_WAD_TYPE_IWAD)
     {
         I_DrawTextSafe(16, 182, 304, N64_STYLE_TEXT, selected_entry->path);
     }
-    else if (selected_entry->compat == N64_WAD_COMPAT_NOT_IWAD)
+    else if (selected_entry->wad_type == N64_WAD_TYPE_PWAD)
     {
         I_DrawTextSafe(16,
                        182,
                        304,
                        N64_STYLE_HINT,
-                       I_CompatMessage(selected_entry->compat));
+                       I_WadTypeMessage(selected_entry->wad_type));
     }
     else
     {
@@ -1244,7 +1254,7 @@ static void I_DrawBrowserFrame(int cursor,
                        182,
                        304,
                        N64_STYLE_ERROR,
-                       I_CompatMessage(selected_entry->compat));
+                       I_WadTypeMessage(selected_entry->wad_type));
     }
 }
 
@@ -1260,7 +1270,7 @@ static void I_DrawSavePakStaticFrame(void)
     I_FillRect(10, 50, 1, 112, col_border);
     I_FillRect(309, 50, 1, 112, col_border);
 
-    I_DrawTextSafe(18, 0, 152, N64_STYLE_TITLE, "DOOM N64");
+    I_DrawTextSafe(18, 0, 152, N64_STYLE_TITLE, N64_BROWSER_TITLE_TEXT);
     I_DrawTextSafe(18, 12, 152, N64_STYLE_SUBTITLE, "SAVES");
 
     I_DrawTextSafe(166, -4, 152, N64_STYLE_HINT, "D-PAD: MOVE");
@@ -1707,7 +1717,7 @@ static int I_BuildIwadIndexList(int* out_indices, int max_entries)
     count = 0;
     for (i = 0; i < n64_wad_count; i++)
     {
-        if (n64_wad_entries[i].compat != N64_WAD_COMPAT_OK)
+        if (n64_wad_entries[i].wad_type != N64_WAD_TYPE_IWAD)
             continue;
 
         if (count < max_entries)
@@ -1808,7 +1818,7 @@ static int I_RunIwadPickerLoop(int pwad_index)
     if (preferred_iwad < 0)
         preferred_iwad = I_FindDefaultEntry();
     if (preferred_iwad < 0)
-        preferred_iwad = I_FindFirstCompatibleEntry();
+        preferred_iwad = I_FindFirstIwadEntry();
 
     cursor = 0;
     if (preferred_iwad >= 0)
@@ -2144,14 +2154,14 @@ static int I_RunSelectionLoop(int* out_base_iwad_index)
 
         if (input_armed && (pressed.a || pressed.start))
         {
-            if (n64_wad_entries[cursor].compat == N64_WAD_COMPAT_OK)
+            if (n64_wad_entries[cursor].wad_type == N64_WAD_TYPE_IWAD)
             {
                 selected_base_iwad = cursor;
                 done = true;
             }
-            else if (n64_wad_entries[cursor].compat == N64_WAD_COMPAT_NOT_IWAD)
+            else if (n64_wad_entries[cursor].wad_type == N64_WAD_TYPE_PWAD)
             {
-                if (I_FindFirstCompatibleEntry() < 0)
+                if (I_FindFirstIwadEntry() < 0)
                 {
                     I_SetRejectNotice(reject_notice_text,
                                       sizeof(reject_notice_text),
@@ -2185,11 +2195,11 @@ static int I_RunSelectionLoop(int* out_base_iwad_index)
                 I_SetRejectNotice(reject_notice_text,
                                   sizeof(reject_notice_text),
                                   &reject_notice_ticks,
-                                  I_CompatMessage(n64_wad_entries[cursor].compat));
+                                  I_WadTypeMessage(n64_wad_entries[cursor].wad_type));
                 N64_DEBUGF("WAD browser: rejected incompatible selection index=%d path=%s (%s)\n",
                            cursor,
                            n64_wad_entries[cursor].path,
-                           I_CompatTag(n64_wad_entries[cursor].compat));
+                           I_WadTypeTag(n64_wad_entries[cursor].wad_type));
             }
         }
 
@@ -2197,7 +2207,7 @@ static int I_RunSelectionLoop(int* out_base_iwad_index)
         {
             default_entry = I_FindDefaultEntry();
             if (default_entry < 0)
-                default_entry = I_FindFirstCompatibleEntry();
+                default_entry = I_FindFirstIwadEntry();
 
             if (default_entry >= 0)
             {
@@ -2226,14 +2236,14 @@ static int I_RunSelectionLoop(int* out_base_iwad_index)
     }
 
     if (selected_base_iwad < 0)
-        selected_base_iwad = I_FindFirstCompatibleEntry();
+        selected_base_iwad = I_FindFirstIwadEntry();
 
     if (out_base_iwad_index)
         *out_base_iwad_index = selected_base_iwad;
 
     if (!used_default)
     {
-        if (n64_wad_entries[cursor].compat == N64_WAD_COMPAT_NOT_IWAD
+        if (n64_wad_entries[cursor].wad_type == N64_WAD_TYPE_PWAD
             && selected_base_iwad >= 0)
         {
             N64_DEBUGF("WAD browser: selected PWAD index=%d path=%s base_iwad=%s\n",
@@ -2401,10 +2411,10 @@ void I_N64RunWadBrowser(void)
                         sizeof(n64_selected_wad),
                         n64_wad_entries[selected_index].path);
 
-        if (n64_wad_entries[selected_index].compat == N64_WAD_COMPAT_NOT_IWAD)
+        if (n64_wad_entries[selected_index].wad_type == N64_WAD_TYPE_PWAD)
         {
             if (selected_base_iwad_index < 0 || selected_base_iwad_index >= n64_wad_count)
-                selected_base_iwad_index = I_FindFirstCompatibleEntry();
+                selected_base_iwad_index = I_FindFirstIwadEntry();
 
             if (selected_base_iwad_index >= 0)
             {

@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <errno.h>
 
 #include <fcntl.h>
 #include <sys/stat.h>
@@ -19,6 +20,12 @@
 #include "i_video.h"
 #include "i_wad_browser_n64.h"
 #include "n64_debug.h"
+
+#ifndef DOOM_N64_PROJECT_VERSION
+#define DOOM_N64_PROJECT_VERSION "dev"
+#endif
+
+#define N64_BROWSER_TITLE_TEXT "DOOM N64 v" DOOM_N64_PROJECT_VERSION
 
 #define N64_WAD_MAX_ENTRIES 128
 #define N64_WAD_PATH_LEN 256
@@ -35,6 +42,15 @@
 #define N64_WAD_TEXT_CACHE_TEXT_MAX 96
 #define N64_WAD_MAX_LOCAL_PLAYERS 4
 
+#define N64_CPAK_PREFIX      "cpak:/"
+#define N64_CPAK_GAME_PUB    "DOOM.64"
+#define N64_CPAK_NOTE_EXT    "SAV"
+#define N64_CPAK_SAVE_PREFIX N64_CPAK_GAME_PUB "-"
+
+#define N64_SAVE_MAX_ENTRIES 64
+#define N64_SAVE_PATH_LEN 96
+#define N64_SAVE_NAME_LEN 32
+
 enum
 {
     N64_STYLE_TEXT = 0,
@@ -47,10 +63,11 @@ enum
 
 enum
 {
-    N64_WAD_COMPAT_OK = 0,
-    N64_WAD_COMPAT_NOT_IWAD = 1,
-    N64_WAD_COMPAT_CORRUPT = 2,
-    N64_WAD_COMPAT_OPEN_FAILED = 3
+    // Classification of WAD role/validity used by browser selection logic.
+    N64_WAD_TYPE_IWAD = 0,
+    N64_WAD_TYPE_PWAD = 1,
+    N64_WAD_TYPE_INVALID = 2,
+    N64_WAD_TYPE_UNREADABLE = 3
 };
 
 typedef struct n64_wad_entry_s
@@ -58,12 +75,21 @@ typedef struct n64_wad_entry_s
     char path[N64_WAD_PATH_LEN];
     char name[N64_WAD_NAME_LEN];
     int64_t size_bytes;
-    int compat;
+    int wad_type;
 } n64_wad_entry_t;
+
+typedef struct n64_save_entry_s
+{
+    char path[N64_SAVE_PATH_LEN];
+    char name[N64_SAVE_NAME_LEN];
+    int64_t size_bytes;
+} n64_save_entry_t;
 
 static n64_wad_entry_t n64_wad_entries[N64_WAD_MAX_ENTRIES];
 static int n64_wad_count;
-static int n64_wad_compatible_count;
+static int n64_wad_iwad_count;
+static n64_save_entry_t n64_save_entries[N64_SAVE_MAX_ENTRIES];
+static int n64_save_count;
 static char n64_selected_wad[N64_WAD_PATH_LEN] = "rom:/doom.wad";
 static char n64_selected_base_iwad[N64_WAD_PATH_LEN] = "rom:/doom.wad";
 static int n64_selected_player_count = 1;
@@ -95,6 +121,9 @@ static color_t col_selected_bg;
 static color_t col_selected_fg;
 static color_t col_error;
 
+static void I_ClampCursorAndPageForCount(int* cursor, int* page, int count);
+static void I_CopyTruncated(char* dst, size_t dst_size, const char* src);
+
 static int I_IsAlphaUpper(char ch)
 {
     return ch >= 'A' && ch <= 'Z';
@@ -123,6 +152,27 @@ static int I_StrCaseCmp(const char* left, const char* right)
         if (lc != rc || !lc || !rc)
             return (int)lc - (int)rc;
     }
+}
+
+static int I_StrNCaseCmp(const char* left, const char* right, size_t count)
+{
+    size_t i;
+
+    if (!left || !right)
+        return (left == right) ? 0 : (left ? 1 : -1);
+
+    for (i = 0; i < count; i++)
+    {
+        unsigned char lc;
+        unsigned char rc;
+
+        lc = (unsigned char)I_ToLowerAscii(left[i]);
+        rc = (unsigned char)I_ToLowerAscii(right[i]);
+        if (lc != rc || !lc || !rc)
+            return (int)lc - (int)rc;
+    }
+
+    return 0;
 }
 
 static const char* I_BaseName(const char* path)
@@ -157,6 +207,75 @@ static int I_HasWadExtension(const char* name)
         && I_ToLowerAscii(name[len - 3]) == 'w'
         && I_ToLowerAscii(name[len - 2]) == 'a'
         && I_ToLowerAscii(name[len - 1]) == 'd';
+}
+
+static int I_HasSaveExtension(const char* name)
+{
+    size_t len;
+
+    if (!name)
+        return 0;
+
+    len = strlen(name);
+    if (len < 4)
+        return 0;
+
+    return I_ToLowerAscii(name[len - 4]) == '.'
+        && I_ToLowerAscii(name[len - 3]) == 's'
+        && I_ToLowerAscii(name[len - 2]) == 'a'
+        && I_ToLowerAscii(name[len - 1]) == 'v';
+}
+
+static int I_IsDoomSaveNoteName(const char* name)
+{
+    const char* ext;
+    size_t prefix_len;
+
+    if (!name || !name[0])
+        return 0;
+
+    if (!I_HasSaveExtension(name))
+        return 0;
+
+    prefix_len = strlen(N64_CPAK_SAVE_PREFIX);
+    if (I_StrNCaseCmp(name, N64_CPAK_SAVE_PREFIX, prefix_len))
+        return 0;
+
+    ext = name + strlen(name) - 4;
+    return ext > (name + prefix_len);
+}
+
+static void I_BuildSaveDisplayName(char* out_name, size_t out_size, const char* file_name)
+{
+    const char* ext;
+    const char* key;
+    size_t key_len;
+    size_t prefix_len;
+
+    if (!out_name || !out_size)
+        return;
+
+    out_name[0] = '\0';
+    if (!file_name || !file_name[0])
+        return;
+
+    prefix_len = strlen(N64_CPAK_SAVE_PREFIX);
+    if (!I_IsDoomSaveNoteName(file_name))
+    {
+        I_CopyTruncated(out_name, out_size, file_name);
+        return;
+    }
+
+    key = file_name + prefix_len;
+    ext = file_name + strlen(file_name) - 4;
+    key_len = (size_t)(ext - key);
+
+    if (key_len >= out_size)
+        key_len = out_size - 1;
+
+    if (key_len > 0)
+        memcpy(out_name, key, key_len);
+    out_name[key_len] = '\0';
 }
 
 static void I_CopyTruncated(char* dst, size_t dst_size, const char* src)
@@ -268,30 +387,30 @@ static uint32_t I_ReadLE32(const uint8_t* p)
          | ((uint32_t)p[3] << 24);
 }
 
-static const char* I_CompatTag(int compat)
+static const char* I_WadTypeTag(int wad_type)
 {
-    switch (compat)
+    switch (wad_type)
     {
-        case N64_WAD_COMPAT_OK:
+        case N64_WAD_TYPE_IWAD:
             return "IWAD";
-        case N64_WAD_COMPAT_NOT_IWAD:
+        case N64_WAD_TYPE_PWAD:
             return "PWAD";
-        case N64_WAD_COMPAT_CORRUPT:
+        case N64_WAD_TYPE_INVALID:
             return "BAD";
         default:
             return "ERR";
     }
 }
 
-static const char* I_CompatMessage(int compat)
+static const char* I_WadTypeMessage(int wad_type)
 {
-    switch (compat)
+    switch (wad_type)
     {
-        case N64_WAD_COMPAT_NOT_IWAD:
+        case N64_WAD_TYPE_PWAD:
             return "PWAD: PRESS A TO CHOOSE BASE IWAD";
-        case N64_WAD_COMPAT_CORRUPT:
+        case N64_WAD_TYPE_INVALID:
             return "NOT COMPATIBLE: IWAD HEADER OR DIRECTORY INVALID";
-        case N64_WAD_COMPAT_OPEN_FAILED:
+        case N64_WAD_TYPE_UNREADABLE:
             return "NOT COMPATIBLE: FAILED TO READ FILE";
         default:
             return "NOT COMPATIBLE";
@@ -313,7 +432,7 @@ static void I_SetRejectNotice(char* text,
     *ticks = 90;
 }
 
-static int I_ClassifyWadCompatibility(const char* path, int64_t size_bytes)
+static int I_DetectWadType(const char* path, int64_t size_bytes)
 {
     int fd;
     int bytes_read;
@@ -327,11 +446,11 @@ static int I_ClassifyWadCompatibility(const char* path, int64_t size_bytes)
     off_t file_end;
 
     if (!path || !path[0])
-        return N64_WAD_COMPAT_OPEN_FAILED;
+        return N64_WAD_TYPE_UNREADABLE;
 
     fd = open(path, O_RDONLY | O_BINARY);
     if (fd < 0)
-        return N64_WAD_COMPAT_OPEN_FAILED;
+        return N64_WAD_TYPE_UNREADABLE;
 
     if (size_bytes < 0)
     {
@@ -353,38 +472,38 @@ static int I_ClassifyWadCompatibility(const char* path, int64_t size_bytes)
     if (size_bytes >= 0 && size_bytes < (int64_t)sizeof(header))
     {
         close(fd);
-        return N64_WAD_COMPAT_CORRUPT;
+        return N64_WAD_TYPE_INVALID;
     }
 
     bytes_read = (int)read(fd, header, sizeof(header));
     close(fd);
 
     if (bytes_read != (int)sizeof(header))
-        return N64_WAD_COMPAT_OPEN_FAILED;
+        return N64_WAD_TYPE_UNREADABLE;
 
     is_iwad = (header[0] == 'I' && header[1] == 'W' && header[2] == 'A' && header[3] == 'D');
     is_pwad = (header[0] == 'P' && header[1] == 'W' && header[2] == 'A' && header[3] == 'D');
 
     if (!is_iwad && !is_pwad)
-        return N64_WAD_COMPAT_CORRUPT;
+        return N64_WAD_TYPE_INVALID;
 
     numlumps = I_ReadLE32(header + 4);
     infotableofs = I_ReadLE32(header + 8);
 
     if (!numlumps)
-        return N64_WAD_COMPAT_CORRUPT;
+        return N64_WAD_TYPE_INVALID;
 
     if (size_bytes >= 0)
     {
         dir_end = (uint64_t)infotableofs + (uint64_t)numlumps * 16ULL;
         if (dir_end > (uint64_t)size_bytes)
-            return N64_WAD_COMPAT_CORRUPT;
+            return N64_WAD_TYPE_INVALID;
     }
 
     if (is_iwad)
-        return N64_WAD_COMPAT_OK;
+        return N64_WAD_TYPE_IWAD;
 
-    return N64_WAD_COMPAT_NOT_IWAD;
+    return N64_WAD_TYPE_PWAD;
 }
 
 static int I_WadPriority(const char* name)
@@ -425,6 +544,118 @@ static int I_CompareWadEntry(const void* lhs_ptr, const void* rhs_ptr)
     return I_StrCaseCmp(lhs->path, rhs->path);
 }
 
+static int I_CompareSaveEntry(const void* lhs_ptr, const void* rhs_ptr)
+{
+    const n64_save_entry_t* lhs = (const n64_save_entry_t*)lhs_ptr;
+    const n64_save_entry_t* rhs = (const n64_save_entry_t*)rhs_ptr;
+    int cmp;
+
+    cmp = I_StrCaseCmp(lhs->name, rhs->name);
+    if (cmp)
+        return cmp;
+
+    return I_StrCaseCmp(lhs->path, rhs->path);
+}
+
+static joypad_port_t I_ResolveSavePakPort(joypad_port_t preferred_port)
+{
+    if (joypad_is_connected(preferred_port))
+        return preferred_port;
+
+    return I_FirstConnectedPort();
+}
+
+static int I_MountSavePakForBrowser(joypad_port_t port, char* status, size_t status_size)
+{
+    int err;
+    int saved_errno;
+    int accessory_type;
+
+    if (status && status_size)
+        status[0] = '\0';
+
+    accessory_type = joypad_get_accessory_type(port);
+    if (accessory_type != JOYPAD_ACCESSORY_TYPE_CONTROLLER_PAK)
+    {
+        if (status && status_size)
+            snprintf(status, status_size, "SAVE PAK NOT DETECTED ON PORT %d", (int)port + 1);
+        N64_DEBUGF("WAD browser: savepak mount abort no controller pak on port=%d\n",
+                   (int)port + 1);
+        return -1;
+    }
+
+    cpakfs_unmount(port);
+    errno = 0;
+    err = cpakfs_mount(port, N64_CPAK_PREFIX);
+    if (!err)
+    {
+        N64_DEBUGF("WAD browser: savepak mount success port=%d\n", (int)port + 1);
+        return 0;
+    }
+
+    saved_errno = errno ? errno : EIO;
+    if (status && status_size)
+    {
+        snprintf(status,
+                 status_size,
+                 "SAVE PAK MOUNT FAILED (%d:%s)",
+                 saved_errno,
+                 strerror(saved_errno));
+    }
+    N64_DEBUGF("WAD browser: savepak mount failed port=%d err=%d errno=%d\n",
+               (int)port + 1,
+               err,
+               saved_errno);
+    return -1;
+}
+
+static void I_UnmountSavePakForBrowser(joypad_port_t port)
+{
+    N64_DEBUGF("WAD browser: savepak unmount port=%d\n", (int)port + 1);
+    cpakfs_unmount(port);
+}
+
+static int I_SaveScanCallback(const char* fn, dir_t* dir, void* data)
+{
+    const char* name;
+    n64_save_entry_t* entry;
+
+    (void)data;
+
+    if (!fn || !dir || dir->d_type != DT_REG)
+        return DIR_WALK_CONTINUE;
+
+    name = I_BaseName(fn);
+    if (n64_save_count >= N64_SAVE_MAX_ENTRIES)
+        return DIR_WALK_CONTINUE;
+
+    entry = &n64_save_entries[n64_save_count];
+    I_CopyTruncated(entry->path, sizeof(entry->path), fn);
+    I_BuildSaveDisplayName(entry->name, sizeof(entry->name), name);
+    entry->size_bytes = dir->d_size;
+    n64_save_count++;
+
+    return DIR_WALK_CONTINUE;
+}
+
+static void I_ScanSaveEntries(void)
+{
+    n64_save_count = 0;
+    memset(n64_save_entries, 0, sizeof(n64_save_entries));
+
+    dir_walk(N64_CPAK_PREFIX, I_SaveScanCallback, NULL);
+
+    if (n64_save_count > 1)
+    {
+        qsort(n64_save_entries,
+              n64_save_count,
+              sizeof(n64_save_entries[0]),
+              I_CompareSaveEntry);
+    }
+
+    N64_DEBUGF("WAD browser: savepak scan found %d save file(s)\n", n64_save_count);
+}
+
 static int I_WadScanCallback(const char* fn, dir_t* dir, void* data)
 {
     const char* name;
@@ -446,10 +677,10 @@ static int I_WadScanCallback(const char* fn, dir_t* dir, void* data)
     I_CopyTruncated(entry->path, sizeof(entry->path), fn);
     I_CopyTruncated(entry->name, sizeof(entry->name), name);
     entry->size_bytes = dir->d_size;
-    entry->compat = I_ClassifyWadCompatibility(fn, dir->d_size);
+    entry->wad_type = I_DetectWadType(fn, dir->d_size);
 
-    if (entry->compat == N64_WAD_COMPAT_OK)
-        n64_wad_compatible_count++;
+    if (entry->wad_type == N64_WAD_TYPE_IWAD)
+        n64_wad_iwad_count++;
 
     n64_wad_count++;
 
@@ -505,7 +736,7 @@ static void I_ScanWadEntries(void)
     int i;
 
     n64_wad_count = 0;
-    n64_wad_compatible_count = 0;
+    n64_wad_iwad_count = 0;
     memset(n64_wad_entries, 0, sizeof(n64_wad_entries));
 
     dir_walk("rom:/", I_WadScanCallback, NULL);
@@ -523,16 +754,16 @@ static void I_ScanWadEntries(void)
               I_CompareWadEntry);
     }
 
-    N64_DEBUGF("WAD browser: found %d .wad entries (%d compatible)\n",
+    N64_DEBUGF("WAD browser: found %d .wad entries (%d IWAD)\n",
                n64_wad_count,
-               n64_wad_compatible_count);
+               n64_wad_iwad_count);
     for (i = 0; i < n64_wad_count; i++)
     {
         N64_DEBUGF("  [%02d] %s (%lld bytes, %s)\n",
                    i,
                    n64_wad_entries[i].path,
                    (long long)n64_wad_entries[i].size_bytes,
-                   I_CompatTag(n64_wad_entries[i].compat));
+                   I_WadTypeTag(n64_wad_entries[i].wad_type));
     }
 }
 
@@ -559,20 +790,20 @@ static int I_FindDefaultEntry(void)
     for (i = 0; i < n64_wad_count; i++)
     {
         if (!I_StrCaseCmp(n64_wad_entries[i].name, "doom.wad")
-            && n64_wad_entries[i].compat == N64_WAD_COMPAT_OK)
+            && n64_wad_entries[i].wad_type == N64_WAD_TYPE_IWAD)
             return i;
     }
 
     return -1;
 }
 
-static int I_FindFirstCompatibleEntry(void)
+static int I_FindFirstIwadEntry(void)
 {
     int i;
 
     for (i = 0; i < n64_wad_count; i++)
     {
-        if (n64_wad_entries[i].compat == N64_WAD_COMPAT_OK)
+        if (n64_wad_entries[i].wad_type == N64_WAD_TYPE_IWAD)
             return i;
     }
 
@@ -888,21 +1119,21 @@ static void I_DrawStaticFrame(void)
     I_FillRect(10, 50, 1, 112, col_border);
     I_FillRect(309, 50, 1, 112, col_border);
 
-    I_DrawTextSafe(18, 7, 152, N64_STYLE_TITLE, "DOOM N64");
-    I_DrawTextSafe(18, 19, 152, N64_STYLE_SUBTITLE, "SELECT WAD");
+    I_DrawTextSafe(18, 0, 152, N64_STYLE_TITLE, N64_BROWSER_TITLE_TEXT);
+    I_DrawTextSafe(18, 12, 152, N64_STYLE_SUBTITLE, "SELECT WAD");
 
-    I_DrawTextSafe(176, 3, 142, N64_STYLE_HINT, "D-PAD: MOVE");
-    I_DrawTextSafe(176, 11, 142, N64_STYLE_HINT, "C-UP/DOWN: PAGE");
-    I_DrawTextSafe(176, 19, 142, N64_STYLE_HINT, "A/START: SELECT");
-    I_DrawTextSafe(176, 27, 142, N64_STYLE_HINT, "B: QUICK IWAD");
-    I_DrawTextSafe(176, 35, 142, N64_STYLE_HINT, "L/R: PLAYERS");
+    I_DrawTextSafe(166, -4, 152, N64_STYLE_HINT, "D-PAD: MOVE");
+    I_DrawTextSafe(166, 4, 152, N64_STYLE_HINT, "C-UP/DOWN: PAGE");
+    I_DrawTextSafe(166, 12, 152, N64_STYLE_HINT, "A/START: SELECT");
+    I_DrawTextSafe(166, 20, 152, N64_STYLE_HINT, "B: QUICK IWAD");
+    I_DrawTextSafe(166, 28, 152, N64_STYLE_HINT, "L/R: PLAYERS  C-R: SAVES");
 }
 
 static void I_DrawEntryRow(int row, int entry_index, int selected)
 {
     char label[32];
     char size_label[16];
-    const char* compat_tag;
+    const char* type_tag;
     int x;
     int y;
     int style;
@@ -921,7 +1152,9 @@ static void I_DrawEntryRow(int row, int entry_index, int selected)
     style = selected ? N64_STYLE_SELECTED : N64_STYLE_TEXT;
     I_DrawTextSafe(x, y, 222, style, label);
 
-    if (entry->compat == N64_WAD_COMPAT_OK && entry->size_bytes >= 0)
+    if (!I_HasSdPrefix(entry->path)
+        && entry->wad_type == N64_WAD_TYPE_IWAD
+        && entry->size_bytes >= 0)
     {
         size_kib = (unsigned long)((entry->size_bytes + 1023) / 1024);
         snprintf(size_label, sizeof(size_label), "%5luK", size_kib);
@@ -929,15 +1162,16 @@ static void I_DrawEntryRow(int row, int entry_index, int selected)
     }
     else
     {
-        int compat_style;
+        int type_style;
 
-        compat_tag = I_CompatTag(entry->compat);
-        if (entry->compat == N64_WAD_COMPAT_NOT_IWAD)
-            compat_style = selected ? N64_STYLE_SELECTED : N64_STYLE_HINT;
+        type_tag = I_WadTypeTag(entry->wad_type);
+        if (entry->wad_type == N64_WAD_TYPE_IWAD
+            || entry->wad_type == N64_WAD_TYPE_PWAD)
+            type_style = selected ? N64_STYLE_SELECTED : N64_STYLE_HINT;
         else
-            compat_style = N64_STYLE_ERROR;
+            type_style = N64_STYLE_ERROR;
 
-        I_DrawTextSafe(248, y, 62, compat_style, compat_tag);
+        I_DrawTextSafe(248, y, 62, type_style, type_tag);
     }
 }
 
@@ -961,7 +1195,7 @@ static void I_DrawBrowserFrame(int cursor,
              "PLAYERS: %d/%d",
              n64_selected_player_count,
              connected_count ? connected_count : 1);
-    I_DrawTextSafe(18, 33, 152, N64_STYLE_HINT, player_label);
+    I_DrawTextSafe(18, 28, 152, N64_STYLE_HINT, player_label);
 
     selected_entry = &n64_wad_entries[cursor];
 
@@ -996,23 +1230,23 @@ static void I_DrawBrowserFrame(int cursor,
 
     snprintf(footer,
              sizeof(footer),
-             "WADS:%d  IWAD:%d  [Z]%s",
+             "WADS:%d  IWAD:%d  [Z]%s [C-R]SAVES",
              n64_wad_count,
-             n64_wad_compatible_count,
+             n64_wad_iwad_count,
              n64_sd_mounted ? "RESCAN SD" : "SCAN SD");
     I_DrawTextSafe(16, 170, 304, N64_STYLE_HINT, footer);
 
-    if (selected_entry->compat == N64_WAD_COMPAT_OK)
+    if (selected_entry->wad_type == N64_WAD_TYPE_IWAD)
     {
         I_DrawTextSafe(16, 182, 304, N64_STYLE_TEXT, selected_entry->path);
     }
-    else if (selected_entry->compat == N64_WAD_COMPAT_NOT_IWAD)
+    else if (selected_entry->wad_type == N64_WAD_TYPE_PWAD)
     {
         I_DrawTextSafe(16,
                        182,
                        304,
                        N64_STYLE_HINT,
-                       I_CompatMessage(selected_entry->compat));
+                       I_WadTypeMessage(selected_entry->wad_type));
     }
     else
     {
@@ -1020,7 +1254,338 @@ static void I_DrawBrowserFrame(int cursor,
                        182,
                        304,
                        N64_STYLE_ERROR,
-                       I_CompatMessage(selected_entry->compat));
+                       I_WadTypeMessage(selected_entry->wad_type));
+    }
+}
+
+static void I_DrawSavePakStaticFrame(void)
+{
+    I_FillRect(0, 0, 320, 200, col_bg_dark);
+    I_FillRect(0, 0, 320, 44, col_bg_header);
+    I_FillRect(0, 44, 320, 2, col_border);
+
+    I_FillRect(10, 50, 300, 112, col_panel);
+    I_FillRect(10, 50, 300, 1, col_border);
+    I_FillRect(10, 161, 300, 1, col_border);
+    I_FillRect(10, 50, 1, 112, col_border);
+    I_FillRect(309, 50, 1, 112, col_border);
+
+    I_DrawTextSafe(18, 0, 152, N64_STYLE_TITLE, N64_BROWSER_TITLE_TEXT);
+    I_DrawTextSafe(18, 12, 152, N64_STYLE_SUBTITLE, "SAVES");
+
+    I_DrawTextSafe(166, -4, 152, N64_STYLE_HINT, "D-PAD: MOVE");
+    I_DrawTextSafe(166, 4, 152, N64_STYLE_HINT, "C-UP/DOWN: PAGE");
+    I_DrawTextSafe(166, 12, 152, N64_STYLE_HINT, "A: DELETE");
+    I_DrawTextSafe(166, 20, 152, N64_STYLE_HINT, "START: REFRESH");
+    I_DrawTextSafe(166, 28, 152, N64_STYLE_HINT, "B: BACK");
+}
+
+static void I_DrawSaveRow(int row, int entry_index, int selected)
+{
+    char name_label[24];
+    char size_label[16];
+    int x;
+    int y;
+    int style;
+    n64_save_entry_t* entry;
+    unsigned long size_kib;
+
+    x = N64_WAD_LIST_X;
+    y = N64_WAD_LIST_Y + row * N64_WAD_ROW_HEIGHT;
+    entry = &n64_save_entries[entry_index];
+
+    if (selected)
+        I_FillRect(x - 2, y - 1, N64_WAD_LIST_WIDTH, N64_WAD_ROW_HEIGHT - 1, col_selected_bg);
+
+    I_ClipLabel(name_label, sizeof(name_label), entry->name, 20);
+    style = selected ? N64_STYLE_SELECTED : N64_STYLE_TEXT;
+    I_DrawTextSafe(x, y, 228, style, name_label);
+
+    if (entry->size_bytes >= 0)
+    {
+        size_kib = (unsigned long)((entry->size_bytes + 1023) / 1024);
+        snprintf(size_label, sizeof(size_label), "%5luK", size_kib);
+    }
+    else
+    {
+        strcpy(size_label, "?K");
+    }
+    I_DrawTextSafe(248, y, 62, style, size_label);
+}
+
+static void I_DrawSavePakFrame(int cursor,
+                               int page,
+                               joypad_port_t save_port,
+                               int notice_ticks,
+                               const char* notice,
+                               int confirm_delete)
+{
+    char footer[64];
+    char path_line[N64_WAD_TEXT_CACHE_TEXT_MAX];
+    int i;
+    int index;
+    int style;
+
+    I_DrawSavePakStaticFrame();
+
+    if (notice_ticks > 0 && notice && notice[0])
+    {
+        style = confirm_delete ? N64_STYLE_ERROR : N64_STYLE_HINT;
+        I_DrawTextSafe(16, 46, 304, style, notice);
+    }
+
+    if (n64_save_count <= 0)
+    {
+        I_DrawTextSafe(18, 80, 286, N64_STYLE_TEXT, "NO SAVE FILES FOUND");
+        I_DrawTextSafe(18, 92, 286, N64_STYLE_HINT, "CONTROLLER PAK HAS NO SAVE NOTES");
+    }
+    else
+    {
+        for (i = 0; i < N64_WAD_VISIBLE_ROWS; i++)
+        {
+            index = page + i;
+            if (index >= n64_save_count)
+                break;
+            I_DrawSaveRow(i, index, index == cursor);
+        }
+
+        if (page > 0)
+            I_DrawTextSafe(132, 52, 120, N64_STYLE_HINT, "^ MORE ^");
+
+        if ((page + N64_WAD_VISIBLE_ROWS) < n64_save_count)
+            I_DrawTextSafe(132, 152, 120, N64_STYLE_HINT, "v MORE v");
+
+        I_ClipLabel(path_line,
+                    sizeof(path_line),
+                    n64_save_entries[cursor].path,
+                    N64_WAD_TEXT_CACHE_TEXT_MAX - 1);
+        I_DrawTextSafe(16, 182, 304, N64_STYLE_TEXT, path_line);
+    }
+
+    snprintf(footer,
+             sizeof(footer),
+             "PORT:%d  SAVES:%d",
+             (int)save_port + 1,
+             n64_save_count);
+    I_DrawTextSafe(16, 170, 304, N64_STYLE_HINT, footer);
+}
+
+static void I_RunSavePakManagerLoop(joypad_port_t* active_port,
+                                    char* notice,
+                                    size_t notice_size,
+                                    int* notice_ticks)
+{
+    joypad_port_t browser_port;
+    joypad_port_t save_port;
+    joypad_port_t next_port;
+    joypad_buttons_t pressed;
+    joypad_buttons_t held;
+    joypad_inputs_t inputs;
+    surface_t* disp;
+    bool input_armed;
+    bool stick_up_latch;
+    bool stick_down_latch;
+    int input_arm_timeout;
+    int cursor;
+    int page;
+    int move;
+    int local_notice_ticks;
+    int confirm_delete;
+    char local_notice[N64_WAD_TEXT_CACHE_TEXT_MAX];
+    char mount_status[N64_WAD_TEXT_CACHE_TEXT_MAX];
+
+    browser_port = (active_port != NULL) ? *active_port : I_FirstConnectedPort();
+    save_port = I_ResolveSavePakPort(browser_port);
+
+    if (I_MountSavePakForBrowser(save_port, mount_status, sizeof(mount_status)) < 0)
+    {
+        I_SetRejectNotice(notice, notice_size, notice_ticks, mount_status);
+        return;
+    }
+
+    I_ScanSaveEntries();
+    cursor = 0;
+    page = 0;
+    input_armed = false;
+    input_arm_timeout = 30;
+    stick_up_latch = false;
+    stick_down_latch = false;
+    local_notice_ticks = 120;
+    confirm_delete = 0;
+    I_CopyTruncated(local_notice, sizeof(local_notice), "SAVE MANAGER READY");
+    I_ClampCursorAndPageForCount(&cursor, &page, n64_save_count);
+
+    for (;;)
+    {
+        joypad_poll();
+        next_port = I_UpdateActivePort(browser_port);
+        if (next_port != browser_port)
+            browser_port = next_port;
+
+        pressed = joypad_get_buttons_pressed(browser_port);
+        held = joypad_get_buttons_held(browser_port);
+        inputs = joypad_get_inputs(browser_port);
+        move = 0;
+
+        if (!input_armed)
+        {
+            if (!held.raw)
+            {
+                input_armed = true;
+            }
+            else if (input_arm_timeout > 0)
+            {
+                input_arm_timeout--;
+                if (!input_arm_timeout)
+                    input_armed = true;
+            }
+        }
+
+        if (!input_armed && (pressed.a || pressed.b || pressed.start))
+        {
+            local_notice_ticks = 90;
+            confirm_delete = 0;
+            I_CopyTruncated(local_notice,
+                            sizeof(local_notice),
+                            "INPUT LOCK: RELEASE HELD BUTTONS");
+        }
+
+        if (pressed.d_up)
+            move = -1;
+        else if (pressed.d_down)
+            move = 1;
+        else if (pressed.d_left)
+            move = -N64_WAD_VISIBLE_ROWS;
+        else if (pressed.d_right)
+            move = N64_WAD_VISIBLE_ROWS;
+        else if (pressed.c_up)
+            move = -N64_WAD_VISIBLE_ROWS;
+        else if (pressed.c_down)
+            move = N64_WAD_VISIBLE_ROWS;
+
+        if (inputs.stick_y > 48)
+        {
+            if (!stick_up_latch)
+                move = -1;
+            stick_up_latch = true;
+        }
+        else
+        {
+            stick_up_latch = false;
+        }
+
+        if (inputs.stick_y < -48)
+        {
+            if (!stick_down_latch)
+                move = 1;
+            stick_down_latch = true;
+        }
+        else
+        {
+            stick_down_latch = false;
+        }
+
+        if (move)
+        {
+            cursor += move;
+            I_ClampCursorAndPageForCount(&cursor, &page, n64_save_count);
+            confirm_delete = 0;
+        }
+
+        if (input_armed && pressed.start)
+        {
+            I_ScanSaveEntries();
+            I_ClampCursorAndPageForCount(&cursor, &page, n64_save_count);
+            confirm_delete = 0;
+            local_notice_ticks = 90;
+            I_CopyTruncated(local_notice, sizeof(local_notice), "SAVES REFRESHED");
+        }
+
+        if (input_armed && pressed.a)
+        {
+            if (n64_save_count <= 0)
+            {
+                local_notice_ticks = 120;
+                confirm_delete = 0;
+                I_CopyTruncated(local_notice,
+                                sizeof(local_notice),
+                                "NO SAVE FILES TO DELETE");
+            }
+            else if (!confirm_delete)
+            {
+                local_notice_ticks = 180;
+                confirm_delete = 1;
+                snprintf(local_notice,
+                         sizeof(local_notice),
+                         "DELETE %s? PRESS A AGAIN",
+                         n64_save_entries[cursor].name);
+            }
+            else
+            {
+                if (remove(n64_save_entries[cursor].path) == 0)
+                {
+                    char deleted_name[N64_SAVE_NAME_LEN];
+
+                    I_CopyTruncated(deleted_name,
+                                    sizeof(deleted_name),
+                                    n64_save_entries[cursor].name);
+                    I_ScanSaveEntries();
+                    I_ClampCursorAndPageForCount(&cursor, &page, n64_save_count);
+                    confirm_delete = 0;
+                    local_notice_ticks = 180;
+                    snprintf(local_notice,
+                             sizeof(local_notice),
+                             "DELETED %s",
+                             deleted_name);
+                    I_SetRejectNotice(notice,
+                                      notice_size,
+                                      notice_ticks,
+                                      local_notice);
+                    N64_DEBUGF("WAD browser: savepak deleted note=%s\n", deleted_name);
+                }
+                else
+                {
+                    int err = errno ? errno : EIO;
+
+                    confirm_delete = 0;
+                    local_notice_ticks = 180;
+                    snprintf(local_notice,
+                             sizeof(local_notice),
+                             "DELETE FAILED (%d:%s)",
+                             err,
+                             strerror(err));
+                }
+            }
+        }
+
+        if (input_armed && pressed.b)
+            break;
+
+        disp = display_get();
+        rdpq_attach_clear(disp, NULL);
+        I_DrawSavePakFrame(cursor,
+                           page,
+                           save_port,
+                           local_notice_ticks,
+                           local_notice,
+                           confirm_delete);
+        rdpq_detach_show();
+
+        if (local_notice_ticks > 0)
+            local_notice_ticks--;
+    }
+
+    I_UnmountSavePakForBrowser(save_port);
+
+    if (active_port)
+        *active_port = browser_port;
+
+    if (!notice_ticks || *notice_ticks <= 0)
+    {
+        I_SetRejectNotice(notice,
+                          notice_size,
+                          notice_ticks,
+                          "RETURNED FROM SAVE MANAGER");
     }
 }
 
@@ -1152,7 +1717,7 @@ static int I_BuildIwadIndexList(int* out_indices, int max_entries)
     count = 0;
     for (i = 0; i < n64_wad_count; i++)
     {
-        if (n64_wad_entries[i].compat != N64_WAD_COMPAT_OK)
+        if (n64_wad_entries[i].wad_type != N64_WAD_TYPE_IWAD)
             continue;
 
         if (count < max_entries)
@@ -1184,13 +1749,22 @@ static void I_DrawIwadPickerFrame(const char* pwad_name,
         return;
 
     I_DrawStaticFrame();
-    I_DrawTextSafe(18, 23, 152, N64_STYLE_SUBTITLE, "SELECT BASE IWAD");
-    I_DrawTextSafe(176, 36, 142, N64_STYLE_HINT, "B: CANCEL");
+
+    // Keep the base subtitle and show picker context directly below it.
+    I_DrawTextSafe(18, 24, 152, N64_STYLE_SUBTITLE, "SELECT BASE IWAD");
+
+    // Repaint the whole right-side header legend for picker mode to avoid
+    // any text-anchor/baseline differences leaving stale glyph fragments.
+    I_FillRect(166, 0, 152, 44, col_bg_header);
+    I_DrawTextSafe(166, -4, 152, N64_STYLE_HINT, "D-PAD: MOVE");
+    I_DrawTextSafe(166, 4, 152, N64_STYLE_HINT, "C-UP/DOWN: PAGE");
+    I_DrawTextSafe(166, 12, 152, N64_STYLE_HINT, "A/START: SELECT");
+    I_DrawTextSafe(166, 20, 152, N64_STYLE_HINT, "B: CANCEL");
 
     if (pwad_name && pwad_name[0])
     {
         I_ClipLabel(pwad_label, sizeof(pwad_label), pwad_name, 34);
-        I_DrawTextSafe(16, 55, 304, N64_STYLE_HINT, pwad_label);
+        I_DrawTextSafe(16, 50, 304, N64_STYLE_HINT, pwad_label);
     }
 
     for (i = 0; i < N64_WAD_VISIBLE_ROWS; i++)
@@ -1244,7 +1818,7 @@ static int I_RunIwadPickerLoop(int pwad_index)
     if (preferred_iwad < 0)
         preferred_iwad = I_FindDefaultEntry();
     if (preferred_iwad < 0)
-        preferred_iwad = I_FindFirstCompatibleEntry();
+        preferred_iwad = I_FindFirstIwadEntry();
 
     cursor = 0;
     if (preferred_iwad >= 0)
@@ -1486,7 +2060,7 @@ static int I_RunSelectionLoop(int* out_base_iwad_index)
             }
         }
 
-        if (!input_armed && (pressed.a || pressed.start || pressed.b))
+        if (!input_armed && (pressed.a || pressed.start || pressed.b || pressed.c_right))
         {
             I_SetRejectNotice(reject_notice_text,
                               sizeof(reject_notice_text),
@@ -1569,16 +2143,25 @@ static int I_RunSelectionLoop(int* out_base_iwad_index)
                                   &reject_notice_ticks);
         }
 
+        if (input_armed && pressed.c_right)
+        {
+            I_RunSavePakManagerLoop(&active_port,
+                                    reject_notice_text,
+                                    sizeof(reject_notice_text),
+                                    &reject_notice_ticks);
+            I_ClampCursorAndPage(&cursor, &page);
+        }
+
         if (input_armed && (pressed.a || pressed.start))
         {
-            if (n64_wad_entries[cursor].compat == N64_WAD_COMPAT_OK)
+            if (n64_wad_entries[cursor].wad_type == N64_WAD_TYPE_IWAD)
             {
                 selected_base_iwad = cursor;
                 done = true;
             }
-            else if (n64_wad_entries[cursor].compat == N64_WAD_COMPAT_NOT_IWAD)
+            else if (n64_wad_entries[cursor].wad_type == N64_WAD_TYPE_PWAD)
             {
-                if (I_FindFirstCompatibleEntry() < 0)
+                if (I_FindFirstIwadEntry() < 0)
                 {
                     I_SetRejectNotice(reject_notice_text,
                                       sizeof(reject_notice_text),
@@ -1612,11 +2195,11 @@ static int I_RunSelectionLoop(int* out_base_iwad_index)
                 I_SetRejectNotice(reject_notice_text,
                                   sizeof(reject_notice_text),
                                   &reject_notice_ticks,
-                                  I_CompatMessage(n64_wad_entries[cursor].compat));
+                                  I_WadTypeMessage(n64_wad_entries[cursor].wad_type));
                 N64_DEBUGF("WAD browser: rejected incompatible selection index=%d path=%s (%s)\n",
                            cursor,
                            n64_wad_entries[cursor].path,
-                           I_CompatTag(n64_wad_entries[cursor].compat));
+                           I_WadTypeTag(n64_wad_entries[cursor].wad_type));
             }
         }
 
@@ -1624,7 +2207,7 @@ static int I_RunSelectionLoop(int* out_base_iwad_index)
         {
             default_entry = I_FindDefaultEntry();
             if (default_entry < 0)
-                default_entry = I_FindFirstCompatibleEntry();
+                default_entry = I_FindFirstIwadEntry();
 
             if (default_entry >= 0)
             {
@@ -1653,14 +2236,14 @@ static int I_RunSelectionLoop(int* out_base_iwad_index)
     }
 
     if (selected_base_iwad < 0)
-        selected_base_iwad = I_FindFirstCompatibleEntry();
+        selected_base_iwad = I_FindFirstIwadEntry();
 
     if (out_base_iwad_index)
         *out_base_iwad_index = selected_base_iwad;
 
     if (!used_default)
     {
-        if (n64_wad_entries[cursor].compat == N64_WAD_COMPAT_NOT_IWAD
+        if (n64_wad_entries[cursor].wad_type == N64_WAD_TYPE_PWAD
             && selected_base_iwad >= 0)
         {
             N64_DEBUGF("WAD browser: selected PWAD index=%d path=%s base_iwad=%s\n",
@@ -1828,10 +2411,10 @@ void I_N64RunWadBrowser(void)
                         sizeof(n64_selected_wad),
                         n64_wad_entries[selected_index].path);
 
-        if (n64_wad_entries[selected_index].compat == N64_WAD_COMPAT_NOT_IWAD)
+        if (n64_wad_entries[selected_index].wad_type == N64_WAD_TYPE_PWAD)
         {
             if (selected_base_iwad_index < 0 || selected_base_iwad_index >= n64_wad_count)
-                selected_base_iwad_index = I_FindFirstCompatibleEntry();
+                selected_base_iwad_index = I_FindFirstIwadEntry();
 
             if (selected_base_iwad_index >= 0)
             {

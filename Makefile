@@ -25,6 +25,7 @@ N64_MKDFS_ROOT = filesystem
 
 DEBUG ?= 0
 BENCH ?= 0
+PROJECT_VERSION ?= 1.2.3
 
 ifneq ($(wildcard $(N64_INST)/n64.mk),)
 include $(N64_INST)/n64.mk
@@ -45,6 +46,7 @@ ifneq ($(BENCH_MP),)
 CFLAGS += -DN64_BENCH_MP=$(BENCH_MP)
 endif
 endif
+CFLAGS += -DDOOM_N64_PROJECT_VERSION=\"$(PROJECT_VERSION)\"
 ifeq ($(strip $(wildcard $(REQUESTED_N64_INST)/mips64-elf/include/ktls.h) $(wildcard $(REQUESTED_N64_INST)/include/ktls.h)),)
 ifneq ($(wildcard $(CURDIR)/libdragon/include/ktls.h),)
 CFLAGS += -I$(CURDIR)/libdragon/include

@@ -120,7 +120,7 @@ void R_InitPlanes (void)
     if (!visplanes)
     {
 	numvisplanes = MAXVISPLANES;
-	visplanes = (visplane_t*) malloc (numvisplanes * sizeof(*visplanes));
+	visplanes = (visplane_t*) calloc (numvisplanes, sizeof(*visplanes));
 	if (!visplanes)
 	    I_Error ("R_InitPlanes: failed to allocate %d visplanes",
 		     numvisplanes);
@@ -141,6 +141,7 @@ static void R_GrowVisplanes (void)
     int		lastoff;
     int		flooroff;
     int		ceiloff;
+    int		oldmax;
     int		newmax;
     visplane_t*	newplanes;
 
@@ -148,10 +149,16 @@ static void R_GrowVisplanes (void)
     flooroff = floorplane   ? (int)(floorplane   - visplanes) : -1;
     ceiloff  = ceilingplane ? (int)(ceilingplane - visplanes) : -1;
 
+    oldmax = numvisplanes;
     newmax = numvisplanes ? numvisplanes * 2 : MAXVISPLANES;
     newplanes = (visplane_t*) realloc (visplanes, newmax * sizeof(*visplanes));
     if (!newplanes)
 	I_Error ("R_GrowVisplanes: failed to grow to %d visplanes", newmax);
+
+    if (newmax > oldmax)
+	memset (newplanes + oldmax,
+		0,
+		(size_t)(newmax - oldmax) * sizeof(*newplanes));
 
     visplanes = newplanes;
     numvisplanes = newmax;
@@ -321,6 +328,7 @@ R_FindPlane
     check->maxx = -1;
     
     memset (check->top,0xff,sizeof(check->top));
+    memset (check->bottom,0,sizeof(check->bottom));
 		
     return check;
 }
@@ -393,6 +401,7 @@ R_CheckPlane
     pl->maxx = stop;
 
     memset (pl->top,0xff,sizeof(pl->top));
+    memset (pl->bottom,0,sizeof(pl->bottom));
 		
     return pl;
 }

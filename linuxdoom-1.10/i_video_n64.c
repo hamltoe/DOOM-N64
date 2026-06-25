@@ -81,9 +81,42 @@ static int weapon_prev_key;
 static int weapon_next_key;
 static int next_weapon_cycle_key = '1';
 
-static boolean I_IsWeaponKeySelectable(player_t* player, int key)
+static int I_WeaponCycleRank(weapontype_t weapon)
+{
+    switch (weapon)
+    {
+        case wp_fist:
+            return 1;
+        case wp_chainsaw:
+            return 2;
+        case wp_pistol:
+            return 3;
+        case wp_shotgun:
+            return 4;
+        case wp_supershotgun:
+            return 5;
+        case wp_chaingun:
+            return 6;
+        case wp_missile:
+            return 7;
+        case wp_plasma:
+            return 8;
+        case wp_bfg:
+            return 9;
+        default:
+            return 0;
+    }
+}
+
+static boolean I_ResolveWeaponSelectionForKey(player_t* player,
+                                              weapontype_t current_weapon,
+                                              int key,
+                                              weapontype_t* out_weapon)
 {
     int newweapon;
+
+    if (!player || !out_weapon)
+        return false;
 
     if (key < '1' || key > '7')
         return false;
@@ -92,7 +125,7 @@ static boolean I_IsWeaponKeySelectable(player_t* player, int key)
 
     if (newweapon == wp_fist
         && player->weaponowned[wp_chainsaw]
-        && !(player->readyweapon == wp_chainsaw && player->powers[pw_strength]))
+        && !(current_weapon == wp_chainsaw && player->powers[pw_strength]))
     {
         newweapon = wp_chainsaw;
     }
@@ -100,18 +133,35 @@ static boolean I_IsWeaponKeySelectable(player_t* player, int key)
     if (gamemode == commercial
         && newweapon == wp_shotgun
         && player->weaponowned[wp_supershotgun]
-        && player->readyweapon != wp_supershotgun)
+        && current_weapon != wp_supershotgun)
     {
         newweapon = wp_supershotgun;
     }
 
-    if (!player->weaponowned[newweapon] || newweapon == player->readyweapon)
+    if (!player->weaponowned[newweapon] || newweapon == current_weapon)
         return false;
 
     if ((newweapon == wp_plasma || newweapon == wp_bfg) && gamemode == shareware)
         return false;
 
+    *out_weapon = (weapontype_t)newweapon;
     return true;
+}
+
+static boolean I_IsWeaponKeySelectableFromWeapon(player_t* player,
+                                                 weapontype_t current_weapon,
+                                                 int key)
+{
+    weapontype_t resolved;
+    return I_ResolveWeaponSelectionForKey(player, current_weapon, key, &resolved);
+}
+
+static boolean I_IsWeaponKeySelectable(player_t* player, int key)
+{
+    if (!player)
+        return false;
+
+    return I_IsWeaponKeySelectableFromWeapon(player, player->readyweapon, key);
 }
 
 static int I_GetNextSelectableWeaponKeyForPlayer(int playernum, int* next_cycle_key)
@@ -173,8 +223,11 @@ static int I_GetDirectionalWeaponKeyForPlayer(int playernum, boolean next)
 {
     int key;
     int current_key;
+    int current_rank;
+    int candidate_rank;
     player_t* player;
     weapontype_t current_weapon;
+    weapontype_t candidate_weapon;
 
     if (playernum < 0 || playernum >= MAXPLAYERS || !playeringame[playernum])
         return 0;
@@ -185,17 +238,29 @@ static int I_GetDirectionalWeaponKeyForPlayer(int playernum, boolean next)
         current_weapon = player->pendingweapon;
 
     current_key = I_WeaponToKey(current_weapon);
+    current_rank = I_WeaponCycleRank(current_weapon);
+
+    if (I_ResolveWeaponSelectionForKey(player, current_weapon, current_key, &candidate_weapon))
+    {
+        candidate_rank = I_WeaponCycleRank(candidate_weapon);
+
+        if ((next && candidate_rank > current_rank)
+            || (!next && candidate_rank < current_rank))
+        {
+            return current_key;
+        }
+    }
 
     if (next)
     {
         for (key = current_key + 1; key <= '7'; key++)
-            if (I_IsWeaponKeySelectable(player, key))
+            if (I_IsWeaponKeySelectableFromWeapon(player, current_weapon, key))
                 return key;
     }
     else
     {
         for (key = current_key - 1; key >= '1'; key--)
-            if (I_IsWeaponKeySelectable(player, key))
+            if (I_IsWeaponKeySelectableFromWeapon(player, current_weapon, key))
                 return key;
     }
 
@@ -788,6 +853,14 @@ void I_FinishUpdate(void)
                SCREENWIDTH * SCREENHEIGHT);
 
     I_N64PointScreen(next_idx);
+
+    // doom_screen8 IS screens[0]; the blit above reads it asynchronously on
+    // the RDP. Wait for that read to finish before the next frame's CPU
+    // rendering overwrites the same buffer -- otherwise, at high (uncapped)
+    // frame rates the CPU races ahead and the RDP samples a half-updated
+    // framebuffer, which shows up as flicker on static elements like the
+    // status-bar numbers.
+    rspq_wait();
 
     if (menuactive && gamestate == GS_LEVEL)
         last_menu_present_ms = get_ticks_ms();

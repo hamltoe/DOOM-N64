@@ -31,6 +31,7 @@ rcsid[] = "$Id: g_game.c,v 1.8 1997/02/03 22:45:09 b1 Exp $";
 #include <errno.h>
 #include <stdio.h>
 #include <libdragon.h>
+#include "n64_debug.h"
 #include "lzfx.h"
 #endif
 
@@ -101,6 +102,8 @@ void	G_DoCompleted (void);
 void	G_DoVictory (void); 
 void	G_DoWorldDone (void); 
 void	G_DoSaveGame (void); 
+
+static int G_EpisodeSkyTexture (int episode);
  
  
 gameaction_t    gameaction; 
@@ -176,21 +179,38 @@ static joypad_port_t G_N64ResolveSavePort(void)
     int active_port;
 
     active_port = I_N64GetActiveGameplayPort();
+    N64_DEBUGF("savepak: resolve port active=%d\n", active_port + 1);
     if (active_port >= (int)JOYPAD_PORT_1 && active_port <= (int)JOYPAD_PORT_4)
     {
         joypad_port_t port;
+        int accessory_type;
+        int connected;
 
         port = (joypad_port_t)active_port;
-        if (joypad_is_connected(port))
+        connected = joypad_is_connected(port);
+        accessory_type = joypad_get_accessory_type(port);
+        N64_DEBUGF("savepak: active candidate port=%d connected=%d accessory=%d\n",
+                   (int)port + 1,
+                   connected,
+                   accessory_type);
+        if (connected)
             return port;
     }
 
     JOYPAD_PORT_FOREACH(port)
     {
+        int connected;
+
+        connected = joypad_is_connected(port);
+        N64_DEBUGF("savepak: scan port=%d connected=%d accessory=%d\n",
+                   (int)port + 1,
+                   connected,
+                   joypad_get_accessory_type(port));
         if (joypad_is_connected(port))
             return port;
     }
 
+    N64_DEBUGF("savepak: no connected pad found; defaulting to port=1\n");
     return JOYPAD_PORT_1;
 }
 
@@ -227,6 +247,8 @@ static void G_N64BuildSaveNotePath(char* out_path, size_t out_size)
              out_size,
              N64_CPAK_PREFIX N64_CPAK_GAME_PUB "-%s." N64_CPAK_NOTE_EXT,
              key);
+
+    N64_DEBUGF("savepak: save_key=%s note_path=%s\n", key, out_path);
 }
 
 static uint32_t G_N64ReadU32(const uint8_t* src)
@@ -246,10 +268,18 @@ static int G_N64MountPak(joypad_port_t port, boolean allow_format)
 {
     int err;
     int saved_errno;
+    int accessory_type;
 
-    if (joypad_get_accessory_type(port) != JOYPAD_ACCESSORY_TYPE_CONTROLLER_PAK)
+    accessory_type = joypad_get_accessory_type(port);
+    N64_DEBUGF("savepak: mount begin port=%d accessory=%d allow_format=%d\n",
+               (int)port + 1,
+               accessory_type,
+               allow_format ? 1 : 0);
+
+    if (accessory_type != JOYPAD_ACCESSORY_TYPE_CONTROLLER_PAK)
     {
         G_N64SetStatus("Controller Pak not detected.");
+        N64_DEBUGF("savepak: mount abort no controller pak on port=%d\n", (int)port + 1);
         return -1;
     }
 
@@ -258,18 +288,37 @@ static int G_N64MountPak(joypad_port_t port, boolean allow_format)
     errno = 0;
     err = cpakfs_mount(port, N64_CPAK_PREFIX);
     if (!err)
+    {
+        N64_DEBUGF("savepak: mount success port=%d\n", (int)port + 1);
         return 0;
+    }
 
     saved_errno = errno;
+    N64_DEBUGF("savepak: mount failed port=%d err=%d errno=%d\n",
+               (int)port + 1,
+               err,
+               saved_errno);
     if (allow_format && saved_errno == ENODEV)
     {
+        N64_DEBUGF("savepak: attempting format port=%d\n", (int)port + 1);
         if (cpakfs_format(port, false) == 0)
         {
+            N64_DEBUGF("savepak: format success port=%d; remounting\n", (int)port + 1);
             errno = 0;
             if (cpakfs_mount(port, N64_CPAK_PREFIX) == 0)
+            {
+                N64_DEBUGF("savepak: remount success after format port=%d\n", (int)port + 1);
                 return 0;
+            }
 
             saved_errno = errno;
+            N64_DEBUGF("savepak: remount failed after format port=%d errno=%d\n",
+                       (int)port + 1,
+                       saved_errno);
+        }
+        else
+        {
+            N64_DEBUGF("savepak: format failed port=%d errno=%d\n", (int)port + 1, errno);
         }
     }
 
@@ -281,11 +330,15 @@ static int G_N64MountPak(joypad_port_t port, boolean allow_format)
              "Pak mount failed (%d:%s)",
              saved_errno,
              strerror(saved_errno));
+    N64_DEBUGF("savepak: mount end failed port=%d status=%s\n",
+               (int)port + 1,
+               n64_save_status);
     return -1;
 }
 
 static void G_N64UnmountPak(joypad_port_t port)
 {
+    N64_DEBUGF("savepak: unmount port=%d\n", (int)port + 1);
     cpakfs_unmount(port);
 }
 #endif
@@ -737,6 +790,13 @@ void G_DoLoadLevel (void)
 	else
 	    if (gamemap < 21)
 		skytexture = R_TextureNumForName ("SKY2");
+    }
+    else
+    {
+	// DOOM 1 style episodes (covers extra episodes such as SIGIL's
+	// episode 5 -> SKY5); also fixes sky on save-game loads which do
+	// not pass through G_InitNew.
+	skytexture = G_EpisodeSkyTexture (gameepisode);
     }
 
     levelstarttic = gametic;        // for time calculation
@@ -1380,6 +1440,10 @@ void G_DoCompleted (void)
 	      case 4:
 		wminfo.next = 2;
 		break;
+	      case 5:
+		// SIGIL: secret level E5M9 returns to E5M7.
+		wminfo.next = 6;
+		break;
 	    }                
 	} 
 	else 
@@ -1392,8 +1456,13 @@ void G_DoCompleted (void)
     wminfo.maxfrags = 0; 
     if ( gamemode == commercial )
 	wminfo.partime = 35*cpars[gamemap-1]; 
-    else
+    else if (gameepisode >= 1 && gameepisode <= 3
+	     && gamemap >= 1 && gamemap <= 9)
 	wminfo.partime = 35*pars[gameepisode][gamemap]; 
+    else
+	// No par time defined for this episode/map (e.g. episode 4+,
+	// SIGIL's episode 5); pars[][] only covers episodes 1-3.
+	wminfo.partime = 0;
     wminfo.pnum = consoleplayer; 
  
     for (i=0 ; i<MAXPLAYERS ; i++) 
@@ -1480,6 +1549,7 @@ void G_DoLoadGame (void)
 #ifdef N64
     int		i;
     int		a,b,c;
+    int         marker;
     char	vcheck[VERSIONSIZE];
     FILE	*fp;
     long	note_size;
@@ -1493,16 +1563,22 @@ void G_DoLoadGame (void)
     loaded = false;
     gameaction = ga_nothing;
     G_N64SetStatus("");
+    N64_DEBUGF("savepak: load begin\n");
 
     save_port = G_N64ResolveSavePort();
     if (G_N64MountPak(save_port, true) < 0)
+    {
+        N64_DEBUGF("savepak: load abort mount failed port=%d\n", (int)save_port + 1);
         goto done;
+    }
 
     G_N64BuildSaveNotePath(n64_save_note_path, sizeof(n64_save_note_path));
+    N64_DEBUGF("savepak: load opening note path=%s\n", n64_save_note_path);
 
     fp = fopen(n64_save_note_path, "rb");
     if (!fp)
     {
+        N64_DEBUGF("savepak: load fopen failed errno=%d path=%s\n", errno, n64_save_note_path);
         if (errno == ENOENT)
             G_N64SetStatus("Must save a game to load!");
         else
@@ -1516,14 +1592,23 @@ void G_DoLoadGame (void)
 
     if (fseek(fp, 0, SEEK_END) != 0)
     {
+        int seek_errno;
+
+        seek_errno = errno;
+        N64_DEBUGF("savepak: load seek-end failed errno=%d\n", seek_errno);
         fclose(fp);
         G_N64SetStatus("Load failed while seeking save note.");
         goto done_unmount;
     }
 
     note_size = ftell(fp);
+    N64_DEBUGF("savepak: load note_size=%ld bytes\n", note_size);
     if (note_size < (long)N64_CPAK_HEADER_SIZE || note_size > (long)N64_CPAK_PAYLOAD_MAX)
     {
+        N64_DEBUGF("savepak: load invalid note_size=%ld (min=%d max=%d)\n",
+                   note_size,
+                   N64_CPAK_HEADER_SIZE,
+                   N64_CPAK_PAYLOAD_MAX);
         fclose(fp);
         G_N64SetStatus("Save note size invalid.");
         goto done_unmount;
@@ -1531,6 +1616,10 @@ void G_DoLoadGame (void)
 
     if (fseek(fp, 0, SEEK_SET) != 0)
     {
+        int seek_errno;
+
+        seek_errno = errno;
+        N64_DEBUGF("savepak: load rewind failed errno=%d\n", seek_errno);
         fclose(fp);
         G_N64SetStatus("Load failed while rewinding save note.");
         goto done_unmount;
@@ -1538,6 +1627,9 @@ void G_DoLoadGame (void)
 
     read_bytes = fread(n64_cpak_payload, 1, (size_t)note_size, fp);
     fclose(fp);
+    N64_DEBUGF("savepak: load read_bytes=%lu expected=%lu\n",
+               (unsigned long)read_bytes,
+               (unsigned long)note_size);
     if (read_bytes != (size_t)note_size)
     {
         G_N64SetStatus("Load failed while reading save note.");
@@ -1545,10 +1637,15 @@ void G_DoLoadGame (void)
     }
 
     compressed_size = G_N64ReadU32(n64_cpak_payload);
+    N64_DEBUGF("savepak: load header compressed_size=%u\n", (unsigned int)compressed_size);
     if (compressed_size < 1
         || compressed_size > N64_CPAK_COMPRESSED_MAX
         || compressed_size > (uint32_t)(note_size - N64_CPAK_HEADER_SIZE))
     {
+        N64_DEBUGF("savepak: load invalid compressed_size=%u note_payload=%lu max=%u\n",
+                   (unsigned int)compressed_size,
+                   (unsigned long)(note_size - N64_CPAK_HEADER_SIZE),
+                   (unsigned int)N64_CPAK_COMPRESSED_MAX);
         G_N64SetStatus("Save note data invalid.");
         goto done_unmount;
     }
@@ -1558,6 +1655,7 @@ void G_DoLoadGame (void)
                          compressed_size,
                          n64_savebuffer,
                          &uncompressed_size);
+    N64_DEBUGF("savepak: load decompress rv=%d out_size=%u\n", rv, uncompressed_size);
     if (rv < 0)
     {
         G_N64SetStatus("Save decompression failed.");
@@ -1571,6 +1669,10 @@ void G_DoLoadGame (void)
     sprintf(vcheck,"version %i",VERSION);
     if (strcmp ((char*)save_p, vcheck))
     {
+        N64_DEBUGF("savepak: load version mismatch found='%.*s' expected='%s'\n",
+                   VERSIONSIZE,
+                   (char*)save_p,
+                   vcheck);
         G_N64SetStatus("Save version mismatch.");
         goto done_unmount;
     }
@@ -1588,25 +1690,35 @@ void G_DoLoadGame (void)
     b = *save_p++;
     c = *save_p++;
     leveltime = (a<<16) + (b<<8) + c;
+    N64_DEBUGF("savepak: load header skill=%d ep=%d map=%d leveltime=%d p0=%d\n",
+               gameskill,
+               gameepisode,
+               gamemap,
+               leveltime,
+               playeringame[0]);
 
     P_UnArchivePlayers();
     P_UnArchiveWorld();
     P_UnArchiveThinkers();
     P_UnArchiveSpecials();
 
-    if (*save_p != 0x1d)
+    marker = *save_p;
+    if (marker != 0x1d)
     {
+        N64_DEBUGF("savepak: load marker mismatch got=0x%02x\n", marker & 0xff);
         G_N64SetStatus("Save data corrupt.");
         goto done_unmount;
     }
 
     loaded = true;
     G_N64SetStatus("Loaded game from pak.");
+    N64_DEBUGF("savepak: load success\n");
 
 done_unmount:
     G_N64UnmountPak(save_port);
 
 done:
+    N64_DEBUGF("savepak: load end loaded=%d status=%s\n", loaded ? 1 : 0, n64_save_status);
     players[consoleplayer].message = n64_save_status;
 
     if (loaded)
@@ -1693,6 +1805,8 @@ void G_DoSaveGame (void)
     char	*description;
     int		length;
     int		i;
+    int         close_rc;
+    int         io_errno;
     unsigned int compressed_size;
     uint32_t payload_size;
     int		rv;
@@ -1704,6 +1818,12 @@ void G_DoSaveGame (void)
     G_N64SetStatus("");
 
     description = savedescription;
+    N64_DEBUGF("savepak: save begin desc='%s' skill=%d ep=%d map=%d leveltime=%d\n",
+               description,
+               gameskill,
+               gameepisode,
+               gamemap,
+               leveltime);
 
     memset(n64_savebuffer, 0, sizeof(n64_savebuffer));
     savebuffer = n64_savebuffer;
@@ -1733,6 +1853,7 @@ void G_DoSaveGame (void)
     *save_p++ = 0x1d;
 
     length = save_p - savebuffer;
+    N64_DEBUGF("savepak: save serialized_bytes=%d capacity=%d\n", length, SAVEGAMESIZE);
     if (length > SAVEGAMESIZE)
         I_Error("Savegame buffer overrun");
 
@@ -1741,6 +1862,10 @@ void G_DoSaveGame (void)
                        (unsigned int)length,
                        &n64_cpak_payload[N64_CPAK_HEADER_SIZE],
                        &compressed_size);
+    N64_DEBUGF("savepak: save compress rv=%d compressed_bytes=%u source_bytes=%d\n",
+               rv,
+               compressed_size,
+               length);
     if (rv < 0)
     {
         G_N64SetStatus("Save too large for Controller Pak.");
@@ -1749,15 +1874,24 @@ void G_DoSaveGame (void)
 
     payload_size = compressed_size + N64_CPAK_HEADER_SIZE;
     G_N64WriteU32(n64_cpak_payload, compressed_size);
+    N64_DEBUGF("savepak: save payload_size=%u (header=%d data=%u)\n",
+               (unsigned int)payload_size,
+               N64_CPAK_HEADER_SIZE,
+               compressed_size);
 
     save_port = G_N64ResolveSavePort();
     if (G_N64MountPak(save_port, true) < 0)
+    {
+        N64_DEBUGF("savepak: save abort mount failed port=%d\n", (int)save_port + 1);
         goto done;
+    }
 
     G_N64BuildSaveNotePath(n64_save_note_path, sizeof(n64_save_note_path));
+    N64_DEBUGF("savepak: save opening note for write path=%s\n", n64_save_note_path);
     fp = fopen(n64_save_note_path, "wb");
     if (!fp)
     {
+        N64_DEBUGF("savepak: save fopen failed errno=%d path=%s\n", errno, n64_save_note_path);
         if (errno == ENOSPC)
             G_N64SetStatus("Mempak full. Save failed.");
         else if (errno == EMFILE)
@@ -1772,9 +1906,16 @@ void G_DoSaveGame (void)
     }
 
     written = fwrite(n64_cpak_payload, 1, payload_size, fp);
-    if (fclose(fp) != 0 || written != payload_size)
+    close_rc = fclose(fp);
+    io_errno = errno;
+    N64_DEBUGF("savepak: save fwrite wrote=%lu expected=%u fclose_rc=%d errno=%d\n",
+               (unsigned long)written,
+               (unsigned int)payload_size,
+               close_rc,
+               io_errno);
+    if (close_rc != 0 || written != payload_size)
     {
-        if (errno == ENOSPC)
+        if (io_errno == ENOSPC)
             G_N64SetStatus("Mempak full. Save failed.");
         else
             G_N64SetStatus("Save write failed.");
@@ -1782,11 +1923,13 @@ void G_DoSaveGame (void)
     }
 
     G_N64SetStatus("Saved game to pak.");
+    N64_DEBUGF("savepak: save success\n");
 
 done_unmount:
     G_N64UnmountPak(save_port);
 
 done:
+    N64_DEBUGF("savepak: save end status=%s\n", n64_save_status);
     savedescription[0] = 0;
     players[consoleplayer].message = n64_save_status;
     R_FillBackScreen();
@@ -1912,6 +2055,44 @@ void G_DoNewGame (void)
 extern  int	skytexture; 
 
 
+//
+// G_EpisodeSkyTexture
+// Resolve the sky texture name for a DOOM 1 style episode. Episodes 1-4
+// use the stock SKY1-SKY4; extra episodes (e.g. SIGIL's episode 5 uses
+// SKY5) resolve SKY<episode> when present, falling back to SKY1.
+//
+static int G_EpisodeSkyTexture (int episode)
+{
+    char	skyname[9];
+    int		tex;
+
+    switch (episode)
+    {
+      case 1: return R_TextureNumForName ("SKY1");
+      case 2: return R_TextureNumForName ("SKY2");
+      case 3: return R_TextureNumForName ("SKY3");
+      case 4: return R_TextureNumForName ("SKY4");
+      default:
+	break;
+    }
+
+    if (episode >= 5 && episode <= 9)
+    {
+	skyname[0] = 'S';
+	skyname[1] = 'K';
+	skyname[2] = 'Y';
+	skyname[3] = (char)('0' + episode);
+	skyname[4] = 0;
+
+	tex = R_CheckTextureNumForName (skyname);
+	if (tex >= 0)
+	    return tex;
+    }
+
+    return R_TextureNumForName ("SKY1");
+}
+
+
 void
 G_InitNew
 ( skill_t	skill,
@@ -1939,8 +2120,11 @@ G_InitNew
 
     if ( gamemode == retail )
     {
-      if (episode > 4)
-	episode = 4;
+      // Allow extra episodes detected in the loaded WAD set (e.g. SIGIL
+      // adds a 5th episode); fall back to the stock four otherwise.
+      int maxepisode = (d_episodes > 4) ? d_episodes : 4;
+      if (episode > maxepisode)
+	episode = maxepisode;
     }
     else if ( gamemode == shareware )
     {
@@ -2026,6 +2210,9 @@ G_InitNew
 	    break; 
 	  case 4:	// Special Edition sky
 	    skytexture = R_TextureNumForName ("SKY4");
+	    break;
+	  default:	// extra episodes (e.g. SIGIL E5 uses SKY5)
+	    skytexture = G_EpisodeSkyTexture (episode);
 	    break;
 	} 
  

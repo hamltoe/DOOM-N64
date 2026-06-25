@@ -35,6 +35,11 @@ rcsid[] = "$Id: m_bbox.c,v 1.1 1997/02/03 22:45:10 b1 Exp $";
 GameMode_t gamemode = indetermined;
 GameMission_t	gamemission = doom;
 
+// Number of selectable episodes detected in the loaded WAD set
+// (DOOM 1 style ExMy). Defaults to 0 until D_DetectEpisodes runs;
+// callers treat 0 as "use stock gamemode defaults".
+int		d_episodes = 0;
+
 // Language.
 Language_t   language = english;
 

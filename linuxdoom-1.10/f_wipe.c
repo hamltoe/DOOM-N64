@@ -35,6 +35,10 @@ static const char rcsid[] = "$Id: f_wipe.c,v 1.2 1997/02/03 22:45:09 b1 Exp $";
 
 #include "f_wipe.h"
 
+#ifdef N64
+#include "n64_debug.h"
+#endif
+
 //
 //                       SCREEN WIPE PACKAGE
 //
@@ -241,6 +245,24 @@ wipe_StartScreen
   int	height )
 {
     wipe_scr_start = screens[2];
+
+    if (!wipe_scr_start)
+    {
+        // Low-memory / alias fallback: keep wipe logic alive using primary screen.
+        wipe_scr_start = screens[0];
+#ifdef N64
+        N64_DEBUGF("wipe: start buffer missing, fallback to screens[0]\n");
+#endif
+    }
+
+    if (!wipe_scr_start)
+    {
+#ifdef N64
+        N64_DEBUGF("wipe: start capture skipped (no screen buffer)\n");
+#endif
+        return 0;
+    }
+
     I_ReadScreen(wipe_scr_start);
     return 0;
 }
@@ -253,8 +275,33 @@ wipe_EndScreen
   int	height )
 {
     wipe_scr_end = screens[3];
-    I_ReadScreen(wipe_scr_end);
-    V_DrawBlock(x, y, 0, width, height, wipe_scr_start); // restore start scr.
+
+    if (!wipe_scr_end)
+    {
+        wipe_scr_end = screens[0];
+#ifdef N64
+        N64_DEBUGF("wipe: end buffer missing, fallback to screens[0]\n");
+#endif
+    }
+
+    if (wipe_scr_end)
+        I_ReadScreen(wipe_scr_end);
+
+    if (!wipe_scr_start)
+    {
+        wipe_scr_start = screens[0];
+#ifdef N64
+        N64_DEBUGF("wipe: start buffer missing at end-stage, fallback to screens[0]\n");
+#endif
+    }
+
+    if (wipe_scr_start)
+        V_DrawBlock(x, y, 0, width, height, wipe_scr_start); // restore start scr.
+#ifdef N64
+    else
+        N64_DEBUGF("wipe: restore skipped (start buffer unavailable)\n");
+#endif
+
     return 0;
 }
 
@@ -282,6 +329,19 @@ wipe_ScreenWipe
 	go = 1;
 	// wipe_scr = (byte *) Z_Malloc(width*height, PU_STATIC, 0); // DEBUG
 	wipe_scr = screens[0];
+
+    if (!wipe_scr || !wipe_scr_start || !wipe_scr_end)
+    {
+#ifdef N64
+        N64_DEBUGF("wipe: disabled this frame (scr=%p start=%p end=%p)\n",
+                   wipe_scr,
+                   wipe_scr_start,
+                   wipe_scr_end);
+#endif
+        go = 0;
+        return 1;
+    }
+
 	(*wipes[wipeno*3])(width, height, ticks);
     }
 

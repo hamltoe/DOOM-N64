@@ -1528,6 +1528,55 @@ void FindResponseFile (void)
 
 
 //
+// D_DetectEpisodes
+// Counts DOOM 1 style episodes (ExMy) present in the loaded WAD set by
+// probing for each episode's first map marker (E<n>M1). Used to support
+// extra episodes added by PWADs (e.g. SIGIL adds episode 5) on top of the
+// stock retail four. No effect for commercial (MAPxx) WADs.
+//
+void D_DetectEpisodes (void)
+{
+    char	marker[9];
+    int		ep;
+
+    d_episodes = 0;
+
+    // Commercial uses MAPxx, not ExMy episodes.
+    if (gamemode == commercial)
+	return;
+
+    for (ep = 1; ep <= 9; ep++)
+    {
+	marker[0] = 'E';
+	marker[1] = (char)('0' + ep);
+	marker[2] = 'M';
+	marker[3] = '1';
+	marker[4] = 0;
+
+	if (W_CheckNumForName(marker) < 0)
+	    break;		// episodes must be contiguous from 1
+
+	d_episodes = ep;
+    }
+
+    N64_DEBUGF("D_DetectEpisodes: gamemode=%d episodes=%d\n",
+	      (int)gamemode, d_episodes);
+
+    // Game mode is guessed from the IWAD filename, which cannot tell the
+    // 3-episode registered DOOM from the 4-episode Ultimate DOOM (both are
+    // named doom.wad). Trust the actual episode count instead: a 4th episode
+    // (E4M1) means retail/Ultimate, and PWADs adding more (SIGIL = E5) also
+    // need retail behaviour (no registered/shareware episode gating).
+    if (d_episodes >= 4 && gamemode != retail && gamemode != commercial)
+    {
+	N64_DEBUGF("D_DetectEpisodes: promoting gamemode %d -> retail for %d episodes\n",
+		  (int)gamemode, d_episodes);
+	gamemode = retail;
+    }
+}
+
+
+//
 // D_DoomMain
 //
 void D_DoomMain (void)
@@ -1790,6 +1839,10 @@ void D_DoomMain (void)
 #ifdef N64
     I_N64LogMemoryStats("d_main:after_W_InitMultipleFiles");
 #endif
+
+    // Detect DOOM 1 style episodes (incl. PWAD-added ones like SIGIL's E5)
+    // now that all lumps are available.
+    D_DetectEpisodes ();
     
 
     // Check for -file in shareware

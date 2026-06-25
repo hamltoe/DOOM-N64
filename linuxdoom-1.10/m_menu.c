@@ -288,12 +288,22 @@ enum
     ep_end
 } episodes_e;
 
-menuitem_t EpisodeMenu[]=
+// Max episodes we can present (DOOM 1 style ExMy, episodes 1-9).
+// Stock retail uses 4; PWADs such as SIGIL add a 5th. Slots beyond the
+// stock four use generic menu graphics shipped by the PWAD (e.g. M_EPI5).
+#define MAX_EPISODE_ITEMS	9
+
+menuitem_t EpisodeMenu[MAX_EPISODE_ITEMS]=
 {
     {1,"M_EPI1", M_Episode,'k'},
     {1,"M_EPI2", M_Episode,'t'},
     {1,"M_EPI3", M_Episode,'i'},
-    {1,"M_EPI4", M_Episode,'t'}
+    {1,"M_EPI4", M_Episode,'t'},
+    {1,"M_EPI5", M_Episode,'s'},
+    {1,"M_EPI6", M_Episode,'6'},
+    {1,"M_EPI7", M_Episode,'7'},
+    {1,"M_EPI8", M_Episode,'8'},
+    {1,"M_EPI9", M_Episode,'9'}
 };
 
 menu_t  EpiDef =
@@ -1433,6 +1443,9 @@ M_WriteText
 static void
 M_WriteTextScaledTrans
 ( int x, int y, char* string, int num, int den, const byte* trans )
+void
+M_WriteTextScaled
+( int x, int y, char* string, int num, int den )
 {
     int		w;
     char*	ch;
@@ -2077,6 +2090,16 @@ void M_Init (void)
       default:
 	break;
     }
-    
+
+    // Size the episode menu from the WAD when extra episodes were detected
+    // (e.g. SIGIL adds a 5th episode on top of the stock retail four).
+    if (gamemode != commercial && d_episodes > 0)
+    {
+	if (d_episodes > MAX_EPISODE_ITEMS)
+	    EpiDef.numitems = MAX_EPISODE_ITEMS;
+	else
+	    EpiDef.numitems = d_episodes;
+    }
+
 }
 

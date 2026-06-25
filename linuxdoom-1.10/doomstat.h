@@ -60,6 +60,10 @@ extern  boolean	devparm;	// DEBUG: launched with -devparm
 extern GameMode_t	gamemode;
 extern GameMission_t	gamemission;
 
+// Number of selectable DOOM 1 style episodes (ExMy) detected at load
+// time. 0 means "not detected, use stock gamemode defaults".
+extern int		d_episodes;
+
 // Set if homebrew PWAD stuff has been added.
 extern  boolean	modifiedgame;
 

@@ -42,6 +42,13 @@ static const char rcsid[] = "$Id: r_main.c,v 1.5 1997/02/03 22:45:12 b1 Exp $";
 
 #include "doomstat.h"
 
+#ifdef N64_BENCH
+#include "n64_bench.h"
+// visplane pool pointers are file-static in r_plane.c; pull them in for the
+// per-frame visplane count (realloc-grown pool: count = lastvisplane-visplanes).
+extern visplane_t*	visplanes;
+extern visplane_t*	lastvisplane;
+#endif
 
 
 
@@ -990,18 +997,43 @@ void R_RenderPlayerView (player_t* player)
     NetUpdate ();
 
     // The head node is the last node output.
+#ifdef N64_BENCH
+    N64Bench_PhaseBegin(BPH_BSP);
     R_RenderBSPNode (numnodes-1);
-    
-    // Check for new console commands.
-    NetUpdate ();
-    
+#else
+    R_RenderBSPNode (numnodes-1);
+#endif
+
+    // Mid-render NetUpdate keeps the net serviced during a long frame. In
+    // 1p there is no net to service, so it only burns I_GetTime + joypad
+    // polling; gate on netgame (true for local split-screen MP too).
+    if (netgame)
+	NetUpdate ();
+
+#ifdef N64_BENCH
+    N64Bench_PhaseSwitch(BPH_BSP, BPH_PLANES);   // one read closes bsp, opens planes
     R_DrawPlanes ();
-    
-    // Check for new console commands.
-    NetUpdate ();
-    
+#else
+    R_DrawPlanes ();
+#endif
+
+    if (netgame)
+	NetUpdate ();
+
+#ifdef N64_BENCH
+    N64Bench_PhaseSwitch(BPH_PLANES, BPH_MASKED);
     R_DrawMasked ();
+    N64Bench_PhaseEnd(BPH_MASKED);
+    // Latch per-frame work counts while the pools are still full (before the
+    // next frame's R_Clear* resets them). vissprites/drawsegs are end-pointer
+    // minus base; visplanes is the realloc-grown pool's used span.
+    N64Bench_SetCounts((int)(vissprite_p - vissprites),
+		       (int)(ds_p - drawsegs),
+		       (int)(lastvisplane - visplanes));
+#else
+    R_DrawMasked ();
+#endif
 
     // Check for new console commands.
-    NetUpdate ();				
+    NetUpdate ();
 }

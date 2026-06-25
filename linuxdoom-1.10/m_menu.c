@@ -229,7 +229,6 @@ void M_DrawEmptyCell(menu_t *menu,int item);
 void M_DrawSelCell(menu_t *menu,int item);
 void M_WriteText(int x, int y, char *string);
 void M_WriteTextScaled(int x, int y, char *string, int num, int den);
-void M_WriteTextScaledDim(int x, int y, char *string, int num, int den);
 extern boolean D_LocalMultiplayerEnabled(void);
 extern int D_GetLocalPlayerCount(void);
 int  M_StringWidth(char *string);
@@ -1017,18 +1016,13 @@ void M_DrawOptions(void)
     M_WriteTextScaled(lx, OptionsDef.y+lh*aspect, "ASPECT", OPT_SNUM, OPT_SDEN);
     M_WriteTextScaled(vx, OptionsDef.y+lh*aspect, widescreen ? "16:9" : "4:3", OPT_SNUM, OPT_SDEN);
 
-    // Context-sensitive row: FRAMERATE in 1p, SPLIT in 2p, greyed in 3-4p.
+    // Context-sensitive row: FRAMERATE in 1p/3-4p, SPLIT in 2p (FRAMERATE
+    // then lives on the mouse-sens row below).
     {
 	int yrow = OptionsDef.y + lh*framerate;
 	int players = D_GetLocalPlayerCount();
 
-	if (players >= 3)
-	{
-	    // 3-4p: interpolation N/A and the layout is fixed; greyed out.
-	    M_WriteTextScaledDim(lx, yrow, "FRAMERATE", OPT_SNUM, OPT_SDEN);
-	    M_WriteTextScaledDim(vx, yrow, "CAPPED", OPT_SNUM, OPT_SDEN);
-	}
-	else if (players == 2)
+	if (players == 2)
 	{
 	    // 2p: choose the split orientation.
 	    M_WriteTextScaled(lx, yrow, "SPLIT", OPT_SNUM, OPT_SDEN);
@@ -1036,7 +1030,7 @@ void M_DrawOptions(void)
 	}
 	else
 	{
-	    // 1p: choose the framerate mode.
+	    // 1p/3-4p: choose the framerate mode.
 	    M_WriteTextScaled(lx, yrow, "FRAMERATE", OPT_SNUM, OPT_SDEN);
 	    M_WriteTextScaled(vx, yrow, frame_interpolation ? "SMOOTH" : "CAPPED", OPT_SNUM, OPT_SDEN);
 	}
@@ -1045,8 +1039,18 @@ void M_DrawOptions(void)
     M_WriteTextScaled(lx, OptionsDef.y+lh*scrnsize, "SCREEN SIZE", OPT_SNUM, OPT_SDEN);
     M_DrawThermo(lx, OptionsDef.y+lh*(scrnsize+1), 9, screenSize);
 
-    M_WriteTextScaled(lx, OptionsDef.y+lh*mousesens, "MOUSE SENS", OPT_SNUM, OPT_SDEN);
-    M_DrawThermo(lx, OptionsDef.y+lh*(mousesens+1), 10, mouseSensitivity);
+    if (D_GetLocalPlayerCount() == 2)
+    {
+	// 2p: SPLIT takes the framerate row, so FRAMERATE moves here. The
+	// mouse-sens row is free on N64 -- nothing posts ev_mouse.
+	M_WriteTextScaled(lx, OptionsDef.y+lh*mousesens, "FRAMERATE", OPT_SNUM, OPT_SDEN);
+	M_WriteTextScaled(vx, OptionsDef.y+lh*mousesens, frame_interpolation ? "SMOOTH" : "CAPPED", OPT_SNUM, OPT_SDEN);
+    }
+    else
+    {
+	M_WriteTextScaled(lx, OptionsDef.y+lh*mousesens, "MOUSE SENS", OPT_SNUM, OPT_SDEN);
+	M_DrawThermo(lx, OptionsDef.y+lh*(mousesens+1), 10, mouseSensitivity);
+    }
 
     M_WriteTextScaled(lx, OptionsDef.y+lh*soundvol, "SOUND VOLUME", OPT_SNUM, OPT_SDEN);
 }
@@ -1104,12 +1108,10 @@ void M_ChangeFramerate(int choice)
     int players = D_GetLocalPlayerCount();
 
     choice = 0;
-    if (players >= 3)
-	return;				// 3-4p: nothing to toggle here
-    else if (players == 2)
+    if (players == 2)
 	splitOrientation = 1 - splitOrientation;	// 2p: split orientation
     else
-	frame_interpolation = 1 - frame_interpolation;	// 1p: framerate mode
+	frame_interpolation = 1 - frame_interpolation;	// 1p/3-4p: framerate mode
 }
 
 void M_ChangeAspect(int choice)
@@ -1242,6 +1244,14 @@ void M_QuitDOOM(int choice)
 
 void M_ChangeSensitivity(int choice)
 {
+    if (D_GetLocalPlayerCount() == 2)
+    {
+	// 2p: this row hosts the FRAMERATE toggle (see M_DrawOptions); either
+	// direction flips it.
+	frame_interpolation = 1 - frame_interpolation;
+	return;
+    }
+
     switch(choice)
     {
       case 0:
@@ -1474,9 +1484,6 @@ M_WriteText
 static void
 M_WriteTextScaledTrans
 ( int x, int y, char* string, int num, int den, const byte* trans )
-void
-M_WriteTextScaled
-( int x, int y, char* string, int num, int den )
 {
     int		w;
     char*	ch;
@@ -1518,12 +1525,6 @@ M_WriteTextScaled
 void M_WriteTextScaled (int x, int y, char* string, int num, int den)
 {
     M_WriteTextScaledTrans(x, y, string, num, den, NULL);
-}
-
-// Greyed/disabled variant: remap through a darker colormap level.
-void M_WriteTextScaledDim (int x, int y, char* string, int num, int den)
-{
-    M_WriteTextScaledTrans(x, y, string, num, den, colormaps + 18*256);
 }
 
 

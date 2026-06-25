@@ -50,6 +50,20 @@ static byte*	wipe_scr_start;
 static byte*	wipe_scr_end;
 static byte*	wipe_scr;
 
+#ifdef N64
+// The N64 layer ping-pongs screens[0] between two buffers at present time. The
+// melt writes its result incrementally into wipe_scr, so it must follow the
+// active draw buffer, and the layer must keep both buffers in sync during the
+// wipe (copy-forward) so the melt always reads its own previous output.
+extern boolean n64_present_copy_forward;
+
+void F_N64WipeRebaseScreen(void)
+{
+    if (go)
+	wipe_scr = screens[0];
+}
+#endif
+
 
 void
 wipe_shittyColMajorXform
@@ -274,7 +288,8 @@ wipe_EndScreen
   int	width,
   int	height )
 {
-    wipe_scr_end = screens[3];
+  
+wipe_scr_end = screens[3];
 
     if (!wipe_scr_end)
     {
@@ -285,7 +300,15 @@ wipe_EndScreen
     }
 
     if (wipe_scr_end)
+    {
+#ifdef N64
+        // The end screen is the frame just rendered into the draw buffer
+        // (screens[0]); I_ReadScreen returns the previously presented buffer.
+        memcpy(wipe_scr_end, screens[0], width * height);
+#else
         I_ReadScreen(wipe_scr_end);
+#endif
+    }
 
     if (!wipe_scr_start)
     {
@@ -324,24 +347,25 @@ wipe_ScreenWipe
     void V_MarkRect(int, int, int, int);
 
     // initial stuff
-    if (!go)
+   if (!go)
     {
 	go = 1;
-	// wipe_scr = (byte *) Z_Malloc(width*height, PU_STATIC, 0); // DEBUG
 	wipe_scr = screens[0];
 
-    if (!wipe_scr || !wipe_scr_start || !wipe_scr_end)
-    {
+	if (!wipe_scr || !wipe_scr_start || !wipe_scr_end)
+	{
 #ifdef N64
-        N64_DEBUGF("wipe: disabled this frame (scr=%p start=%p end=%p)\n",
-                   wipe_scr,
-                   wipe_scr_start,
-                   wipe_scr_end);
+	    N64_DEBUGF("wipe: disabled this frame (scr=%p start=%p end=%p)\n",
+		       wipe_scr, wipe_scr_start, wipe_scr_end);
 #endif
-        go = 0;
-        return 1;
-    }
+	    go = 0;
+	    return 1;
+	}
 
+#ifdef N64
+	// Keep both ping-pong buffers in sync while the melt runs incrementally.
+	n64_present_copy_forward = true;
+#endif
 	(*wipes[wipeno*3])(width, height, ticks);
     }
 
@@ -355,6 +379,9 @@ wipe_ScreenWipe
     {
 	go = 0;
 	(*wipes[wipeno*3+2])(width, height, ticks);
+#ifdef N64
+	n64_present_copy_forward = false;
+#endif
     }
 
     return !go;

@@ -92,10 +92,19 @@ fixed_t			distscale[SCREENWIDTH];
 fixed_t			basexscale;
 fixed_t			baseyscale;
 
-fixed_t			cachedheight[SCREENHEIGHT];
-fixed_t			cacheddistance[SCREENHEIGHT];
-fixed_t			cachedxstep[SCREENHEIGHT];
-fixed_t			cachedystep[SCREENHEIGHT];
+// Per-scanline plane-mapping cache. Packed as array-of-structs (16 bytes ==
+// one VR4300 cache line) so a single y indexes height/distance/xstep/ystep from
+// the same line: the R_MapPlane cache-hit path then touches one line instead of
+// the four separate lines a struct-of-arrays layout would scatter them across.
+typedef struct
+{
+    fixed_t	height;
+    fixed_t	distance;
+    fixed_t	xstep;
+    fixed_t	ystep;
+} planecache_t;
+
+planecache_t		planecache[SCREENHEIGHT];
 
 
 
@@ -194,18 +203,22 @@ R_MapPlane
     }
 #endif
 
-    if (planeheight != cachedheight[y])
     {
-	cachedheight[y] = planeheight;
-	distance = cacheddistance[y] = FixedMul (planeheight, yslope[y]);
-	ds_xstep = cachedxstep[y] = FixedMul (distance,basexscale);
-	ds_ystep = cachedystep[y] = FixedMul (distance,baseyscale);
-    }
-    else
-    {
-	distance = cacheddistance[y];
-	ds_xstep = cachedxstep[y];
-	ds_ystep = cachedystep[y];
+	register planecache_t* pc = &planecache[y];
+
+	if (planeheight != pc->height)
+	{
+	    pc->height = planeheight;
+	    distance = pc->distance = FixedMul (planeheight, yslope[y]);
+	    ds_xstep = pc->xstep = FixedMul (distance,basexscale);
+	    ds_ystep = pc->ystep = FixedMul (distance,baseyscale);
+	}
+	else
+	{
+	    distance = pc->distance;
+	    ds_xstep = pc->xstep;
+	    ds_ystep = pc->ystep;
+	}
     }
 	
     length = FixedMul (distance,distscale[x1]);
@@ -252,9 +265,13 @@ void R_ClearPlanes (void)
 
     lastvisplane = visplanes;
     lastopening = openings;
-    
+
     // texture calculation
-    memset (cachedheight, 0, sizeof(cachedheight));
+    // Reset only the per-scanline height sentinels, exactly as the original
+    // memset(cachedheight,...) did. distance/xstep/ystep are intentionally left
+    // stale: R_MapPlane recomputes them whenever planeheight != height.
+    for (i=0 ; i<SCREENHEIGHT ; i++)
+	planecache[i].height = 0;
 
     // left to right mapping
     angle = (viewangle-ANG90)>>ANGLETOFINESHIFT;

@@ -33,6 +33,7 @@ include $(N64_INST)/include/n64.mk
 endif
 
 N64_ROM_TITLE = "DOOM N64 WIP"
+N64_ROM_SAVETYPE = eeprom4k	# cart EEPROM for persisted settings (not the Controller Pak)
 
 CFLAGS += -I$(DOOM_SRC)
 CFLAGS += -IDOOM_N64_Port_Example/src
@@ -157,8 +158,10 @@ MUS_INSTRUMENT_BANK_DST := $(N64_MKDFS_ROOT)/MUS/MIDI_Instruments
 MUS_BANK_ASSET := $(MUS_INSTRUMENT_BANK_DST)
 endif
 
-WAD_ASSETS_LOWER = $(wildcard WADs/*.wad)
-WAD_ASSETS_UPPER = $(wildcard WADs/*.WAD)
+# WAD filenames to leave out of the ROM, e.g. make EXCLUDE_WADS=DOOM1.WAD
+EXCLUDE_WADS ?=
+WAD_ASSETS_LOWER = $(filter-out $(addprefix WADs/,$(EXCLUDE_WADS)),$(wildcard WADs/*.wad))
+WAD_ASSETS_UPPER = $(filter-out $(addprefix WADs/,$(EXCLUDE_WADS)),$(wildcard WADs/*.WAD))
 
 WAD_ASSETS_COPY = \
 	$(addprefix $(N64_MKDFS_ROOT)/,$(notdir $(WAD_ASSETS_LOWER))) \
@@ -193,7 +196,7 @@ check-wads: $(FS_PREP_STAMP)
 
 stage-wads: check-wads | $(FS_PREP_STAMP)
 	@set -e; \
-	for src in WADs/*.wad WADs/*.WAD; do \
+	for src in $(WAD_ASSETS_LOWER) $(WAD_ASSETS_UPPER); do \
 		if [ -f "$$src" ]; then \
 			dst="$(N64_MKDFS_ROOT)/$$(basename "$$src")"; \
 			echo "    [WAD] $$src -> $$dst"; \

@@ -140,6 +140,10 @@ void D_CheckNetGame (void);
 void D_ProcessEvents (void);
 void G_BuildTiccmd (ticcmd_t* cmd);
 void D_DoAdvanceDemo (void);
+
+// Uncapped framerate interpolation state (defined in r_main.c).
+extern boolean	r_interpolate;
+extern fixed_t	fractionaltic;
 #ifdef N64
 void G_BuildTiccmdN64Local(ticcmd_t* cmd, int playernum, const n64_local_input_t* input);
 #endif
@@ -844,9 +848,69 @@ void D_DoomLoop (void)
 	}
 	else
 	{
-	    TryRunTics (); // will run at least one tic
+	    // Render uncapped (every vsync) in single-player. Even with
+	    // interpolation OFF this matters: at the 35 Hz render rate a slow
+	    // frame lets the sim catch up two tics in one rendered frame, which
+	    // shows as a doubled-frame skip. Rendering every vsync means one tic
+	    // spans ~1.7 frames, so no tic is ever skipped. Interpolation (the
+	    // sub-tic lerp) is the separate, optional smoothing on top.
+	    // render_uncapped also covers local 2-4p so the doubled-frame skip
+	    // is fixed there too; only true network games are excluded. The
+	    // sub-tic interpolation stays single-player for now (split-screen
+	    // needs per-viewport handling), so it is gated off for local MP.
+	    boolean render_uncapped =
+		   !singletics
+		&& !demoplayback
+		&& !demorecording
+		&& !paused
+		&& !menuactive
+		&& gamestate == GS_LEVEL
+		&& (!netgame || D_LocalMultiplayerEnabled());
+	    boolean interpolate =
+		render_uncapped && frame_interpolation && !D_LocalMultiplayerEnabled();
+
+	    r_interpolate = interpolate;
+	    tryruntics_nonblocking = render_uncapped;
+
+	    TryRunTics (); // non-blocking when uncapped; runs a tic only when due
+
+	    if (interpolate)
+	    {
+		// Anchor sub-tic phase to the tic the renderer actually has
+		// loaded (gametic). TryRunTics is non-blocking, so sampling a
+		// free-running wall-clock phase can wrap backward for one frame
+		// when a tic boundary lands in the sample window -- that is the
+		// periodic rotation hiccup. Re-anchor phase 0 to the latest tic
+		// boundary whenever gametic advances, and clamp to one tic.
+		static int		interp_anchor_tic = -1;
+		static unsigned long long interp_anchor_us = 0;
+		unsigned long long	now_us = I_GetTimeUS();
+		unsigned long long	into_tic_us =
+		    ((now_us * TICRATE) % 1000000ULL) / TICRATE;
+		unsigned long long	dt_us;
+
+		if (gametic != interp_anchor_tic)
+		{
+		    interp_anchor_tic = gametic;
+		    interp_anchor_us  =
+			now_us > into_tic_us ? now_us - into_tic_us : 0;
+		}
+
+		dt_us = now_us > interp_anchor_us ? now_us - interp_anchor_us : 0;
+
+		if (dt_us >= 1000000ULL / TICRATE)
+		    fractionaltic = FRACUNIT;
+		else
+		    fractionaltic =
+			(fixed_t)((dt_us * TICRATE * FRACUNIT) / 1000000ULL);
+	    }
+	    else
+	    {
+		r_interpolate = false;
+		fractionaltic = 0;
+	    }
 	}
-		
+
 	S_UpdateSounds (players[consoleplayer].mo);// move positional sounds
 
 	// Update display, next frame, with current state.
@@ -1752,6 +1816,9 @@ void D_DoomMain (void)
 
     printf ("M_LoadDefaults: Load system defaults.\n");
     M_LoadDefaults ();              // load before initing other systems
+#ifdef N64
+    I_N64LoadSettings ();           // override with values saved to cart EEPROM
+#endif
 
     printf ("Z_Init: Init zone memory allocation daemon. \n");
     Z_Init ();

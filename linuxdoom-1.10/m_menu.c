@@ -199,6 +199,7 @@ void M_MusicVol(int choice);
 void M_ChangeDetail(int choice);
 void M_ChangeMovement(int choice);
 void M_ChangeControls(int choice);
+void M_ChangeFramerate(int choice);
 void M_SizeDisplay(int choice);
 void M_StartGame(int choice);
 void M_Sound(int choice);
@@ -227,6 +228,8 @@ void M_DrawEmptyCell(menu_t *menu,int item);
 void M_DrawSelCell(menu_t *menu,int item);
 void M_WriteText(int x, int y, char *string);
 void M_WriteTextScaled(int x, int y, char *string, int num, int den);
+void M_WriteTextScaledDim(int x, int y, char *string, int num, int den);
+extern boolean D_LocalMultiplayerEnabled(void);
 int  M_StringWidth(char *string);
 int  M_StringHeight(char *string);
 void M_StartControlPanel(void);
@@ -357,6 +360,7 @@ enum
     detail,
     movement,
     controls,
+    framerate,
     scrnsize,
     option_empty1,
     mousesens,
@@ -374,6 +378,7 @@ menuitem_t OptionsMenu[]=
     {1,"",	M_ChangeDetail,'g'},
     {1,"",	M_ChangeMovement,'r'},
     {1,"",	M_ChangeControls,'c'},
+    {1,"",	M_ChangeFramerate,'f'},
     {2,"",	M_SizeDisplay,'s'},
     {-1,"",0},
     {2,"",	M_ChangeSensitivity,'m'},
@@ -387,9 +392,9 @@ menu_t  OptionsDef =
     &MainDef,
     OptionsMenu,
     M_DrawOptions,
-    60,34,
+    60,27,
     0,
-    13			// compact line height so all 10 rows clear the status bar
+    12			// compact line height so all 11 rows clear the status bar
 };
 
 //
@@ -989,7 +994,7 @@ void M_DrawOptions(void)
     int lx = OptionsDef.x;
     int vx = OptionsDef.x + 150;		// value column
 
-    V_DrawPatchDirect (108,15,0,W_CacheLumpName("M_OPTTTL",PU_CACHE));
+    V_DrawPatchDirect (108,9,0,W_CacheLumpName("M_OPTTTL",PU_CACHE));
 
     M_WriteTextScaled(lx, OptionsDef.y+lh*endgame, "END GAME", OPT_SNUM, OPT_SDEN);
 
@@ -1004,6 +1009,19 @@ void M_DrawOptions(void)
 
     M_WriteTextScaled(lx, OptionsDef.y+lh*controls, "CONTROLS", OPT_SNUM, OPT_SDEN);
     M_WriteTextScaled(vx, OptionsDef.y+lh*controls, controlScheme ? "ALT" : "ORIG", OPT_SNUM, OPT_SDEN);
+
+    // Interpolation is single-player only; in 2-4p the toggle is greyed out
+    // and locked to CAPPED (the doubled-frame fix still applies there).
+    if (D_LocalMultiplayerEnabled())
+    {
+	M_WriteTextScaledDim(lx, OptionsDef.y+lh*framerate, "FRAMERATE", OPT_SNUM, OPT_SDEN);
+	M_WriteTextScaledDim(vx, OptionsDef.y+lh*framerate, "CAPPED", OPT_SNUM, OPT_SDEN);
+    }
+    else
+    {
+	M_WriteTextScaled(lx, OptionsDef.y+lh*framerate, "FRAMERATE", OPT_SNUM, OPT_SDEN);
+	M_WriteTextScaled(vx, OptionsDef.y+lh*framerate, frame_interpolation ? "SMOOTH" : "CAPPED", OPT_SNUM, OPT_SDEN);
+    }
 
     M_WriteTextScaled(lx, OptionsDef.y+lh*scrnsize, "SCREEN SIZE", OPT_SNUM, OPT_SDEN);
     M_DrawThermo(lx, OptionsDef.y+lh*(scrnsize+1), 9, screenSize);
@@ -1056,6 +1074,18 @@ void M_ChangeControls(int choice)
 {
     choice = 0;
     controlScheme = 1 - controlScheme;
+}
+
+
+//
+//      Toggle uncapped (interpolated) vs capped framerate
+//
+void M_ChangeFramerate(int choice)
+{
+    choice = 0;
+    if (D_LocalMultiplayerEnabled())
+	return;			// locked to CAPPED in 2-4p (no interpolation)
+    frame_interpolation = 1 - frame_interpolation;
 }
 
 
@@ -1410,6 +1440,9 @@ M_WriteText
 //
 //      Write a string using the hu_font, scaled by num/den (e.g. 3,2 = 1.5x)
 //
+static void
+M_WriteTextScaledTrans
+( int x, int y, char* string, int num, int den, const byte* trans )
 void
 M_WriteTextScaled
 ( int x, int y, char* string, int num, int den )
@@ -1446,9 +1479,20 @@ M_WriteTextScaled
 	w = SHORT (hu_font[c]->width);
 	if (cx + (w * num) / den > SCREENWIDTH)
 	    break;
-	V_DrawPatchStretch(cx, cy, 0, hu_font[c], num, den);
+	V_DrawPatchStretch(cx, cy, 0, hu_font[c], num, den, trans);
 	cx += (w * num) / den;
     }
+}
+
+void M_WriteTextScaled (int x, int y, char* string, int num, int den)
+{
+    M_WriteTextScaledTrans(x, y, string, num, den, NULL);
+}
+
+// Greyed/disabled variant: remap through a darker colormap level.
+void M_WriteTextScaledDim (int x, int y, char* string, int num, int den)
+{
+    M_WriteTextScaledTrans(x, y, string, num, den, colormaps + 18*256);
 }
 
 
@@ -1927,6 +1971,9 @@ void M_Drawer (void)
 void M_ClearMenus (void)
 {
     menuactive = 0;
+#ifdef N64
+    I_N64SaveSettings ();   // persist option changes to cart EEPROM on menu close
+#endif
     // if (!netgame && usergame && paused)
     //       sendpause = true;
 }

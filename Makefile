@@ -25,7 +25,7 @@ N64_MKDFS_ROOT = filesystem
 
 DEBUG ?= 0
 BENCH ?= 0
-PROJECT_VERSION ?= 1.2.3
+PROJECT_VERSION ?= 1.2.4
 
 ifneq ($(wildcard $(N64_INST)/n64.mk),)
 include $(N64_INST)/n64.mk

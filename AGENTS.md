@@ -8,7 +8,6 @@ WSL (Windows Subsystem for LInux) instead of developing natively on Linux. Use "
 ## Build Flags
 - DEBUG=1 — Debug mode allows on screen printing and writes logging data to debug.log file to be generated
 - UPLOAD=1 — Invoke upload script to load built ROM onto N64 Flash Cart (not yet implemented)
-- 'Readme.md' — IN project root, Contains build instructions
 
 # Target Platform Hardware
 N64 game console witha RISC based MIPS R4300i-series processor. 8KB of L1 cache, no L2 cache. Lacks branch prediction and will always executes first instruction after any IF or IF ELSE statement, so make first instruction simple, no calling into DRAM
